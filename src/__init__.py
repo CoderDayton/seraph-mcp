@@ -32,12 +32,14 @@ __author__ = "Seraph MCP Team"
 __license__ = "MIT"
 
 # Core exports
-from . import cache, config, errors, observability
+from . import cache, config, errors, observability, providers, semantic_cache
 
 __all__ = [
     "cache",
     "config",
     "errors",
     "observability",
+    "providers",
+    "semantic_cache",
     "__version__",
 ]

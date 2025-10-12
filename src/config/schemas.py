@@ -265,6 +265,54 @@ class SecurityConfig(BaseModel):
     )
 
 
+class ProviderConfig(BaseModel):
+    """Configuration for a single AI model provider."""
+
+    enabled: bool = Field(
+        default=True,
+        description="Whether this provider is enabled"
+    )
+    api_key: Optional[str] = Field(
+        default=None,
+        description="API key for the provider"
+    )
+    base_url: Optional[str] = Field(
+        default=None,
+        description="Custom base URL (optional, for openai-compatible)"
+    )
+    timeout: float = Field(
+        default=30.0,
+        ge=1.0,
+        description="Request timeout in seconds"
+    )
+    max_retries: int = Field(
+        default=3,
+        ge=0,
+        description="Maximum retry attempts"
+    )
+
+
+class ProvidersConfig(BaseModel):
+    """Configuration for AI model providers."""
+
+    openai: ProviderConfig = Field(
+        default_factory=ProviderConfig,
+        description="OpenAI provider configuration"
+    )
+    anthropic: ProviderConfig = Field(
+        default_factory=ProviderConfig,
+        description="Anthropic provider configuration"
+    )
+    gemini: ProviderConfig = Field(
+        default_factory=ProviderConfig,
+        description="Google Gemini provider configuration"
+    )
+    openai_compatible: ProviderConfig = Field(
+        default_factory=ProviderConfig,
+        description="OpenAI-compatible provider configuration (for custom endpoints)"
+    )
+
+
 class SeraphConfig(BaseModel):
     """Root configuration for Seraph MCP."""
 
@@ -283,6 +331,7 @@ class SeraphConfig(BaseModel):
     token_optimization: TokenOptimizationConfig = Field(default_factory=TokenOptimizationConfig)
     budget: BudgetConfig = Field(default_factory=BudgetConfig)
     security: SecurityConfig = Field(default_factory=SecurityConfig)
+    providers: ProvidersConfig = Field(default_factory=ProvidersConfig)
 
     @field_validator("security")
     @classmethod

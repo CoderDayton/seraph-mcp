@@ -12,7 +12,7 @@ from typing import Any, Dict
 
 from seraph_mcp.token_optimization.tools import TokenOptimizationTools
 from seraph_mcp.token_optimization.config import TokenOptimizationConfig
-from seraph_mcp.config.schemas import FeatureFlags
+from src.config.schemas import FeatureFlags
 
 
 class TestTokenOptimizationIntegration:

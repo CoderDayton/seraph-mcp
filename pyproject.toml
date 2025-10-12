@@ -31,20 +31,25 @@ dependencies = [
     "pydantic>=2.0.0",          # Typed configuration and validation
     "pydantic-settings>=2.0.0", # Settings management
     "python-dotenv>=1.0.0",     # Environment variables
+    "httpx>=0.25.0",            # HTTP client for Models.dev API
 
     # Cache and storage
     "redis>=5.0.0",             # Redis backend for caching
 
+    # AI Model Providers (all included)
+    "openai>=1.0.0",            # OpenAI GPT models
+    "anthropic>=0.25.0",        # Anthropic Claude models
+    "google-genai>=0.2.0",      # Google Gemini models (newer SDK)
+
     # Token optimization
     "tiktoken>=0.5.0",          # OpenAI token counting
-    "anthropic>=0.25.0",        # Anthropic/Claude token counting
 ]
 
 [project.optional-dependencies]
-# Optional heavy dependencies for advanced features
-embeddings = [
-    "sentence-transformers>=2.0.0",  # Local embedding models for semantic cache
-    "chromadb>=0.4.0",               # Vector database for semantic search
+# Semantic cache dependencies (optional - needed for semantic caching feature)
+semantic_cache = [
+    "sentence-transformers>=2.0.0",  # Local embedding models
+    "chromadb>=0.4.0",               # Vector database for similarity search
 ]
 
 # Development dependencies
@@ -61,10 +66,10 @@ dev = [
     "pre-commit>=3.5.0",
 ]
 
-# All features (for convenience)
+# All optional features (for convenience)
 all = [
-    "sentence-transformers>=2.0.0",
-    "chromadb>=0.4.0",
+    "sentence-transformers>=2.0.0",  # Semantic cache
+    "chromadb>=0.4.0",               # Semantic cache
 ]
 
 [project.urls]

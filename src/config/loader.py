@@ -97,6 +97,36 @@ def load_config(
             "require_https": os.getenv("REQUIRE_HTTPS", "false").lower() == "true",
             "allowed_hosts": [h.strip() for h in os.getenv("ALLOWED_HOSTS", "*").split(",")],
         },
+        "providers": {
+            "openai": {
+                "enabled": os.getenv("OPENAI_ENABLED", "false").lower() == "true",
+                "api_key": os.getenv("OPENAI_API_KEY"),
+                "base_url": os.getenv("OPENAI_BASE_URL"),
+                "timeout": float(os.getenv("OPENAI_TIMEOUT", "30.0")),
+                "max_retries": int(os.getenv("OPENAI_MAX_RETRIES", "3")),
+            },
+            "anthropic": {
+                "enabled": os.getenv("ANTHROPIC_ENABLED", "false").lower() == "true",
+                "api_key": os.getenv("ANTHROPIC_API_KEY"),
+                "base_url": os.getenv("ANTHROPIC_BASE_URL"),
+                "timeout": float(os.getenv("ANTHROPIC_TIMEOUT", "30.0")),
+                "max_retries": int(os.getenv("ANTHROPIC_MAX_RETRIES", "3")),
+            },
+            "gemini": {
+                "enabled": os.getenv("GEMINI_ENABLED", "false").lower() == "true",
+                "api_key": os.getenv("GEMINI_API_KEY"),
+                "base_url": os.getenv("GEMINI_BASE_URL"),
+                "timeout": float(os.getenv("GEMINI_TIMEOUT", "30.0")),
+                "max_retries": int(os.getenv("GEMINI_MAX_RETRIES", "3")),
+            },
+            "openai_compatible": {
+                "enabled": os.getenv("OPENAI_COMPATIBLE_ENABLED", "false").lower() == "true",
+                "api_key": os.getenv("OPENAI_COMPATIBLE_API_KEY"),
+                "base_url": os.getenv("OPENAI_COMPATIBLE_BASE_URL"),
+                "timeout": float(os.getenv("OPENAI_COMPATIBLE_TIMEOUT", "30.0")),
+                "max_retries": int(os.getenv("OPENAI_COMPATIBLE_MAX_RETRIES", "3")),
+            },
+        },
     }
 
     try:

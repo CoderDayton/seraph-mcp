@@ -10,14 +10,15 @@ from .schemas import (
     CacheBackend,
     CacheConfig,
     Environment,
+    FeatureFlags,
     LogLevel,
     ObservabilityBackend,
     ObservabilityConfig,
-    OptimizationConfig,
-    RoutingConfig,
+    ProviderConfig,
+    ProvidersConfig,
     SecurityConfig,
     SeraphConfig,
-    ServerConfig,
+    TokenOptimizationConfig,
 )
 
 __all__ = [
@@ -33,11 +34,12 @@ __all__ = [
     "ObservabilityBackend",
     "LogLevel",
     # Config sections
-    "ServerConfig",
     "CacheConfig",
     "ObservabilityConfig",
-    "RoutingConfig",
-    "OptimizationConfig",
+    "FeatureFlags",
+    "TokenOptimizationConfig",
     "BudgetConfig",
     "SecurityConfig",
+    "ProviderConfig",
+    "ProvidersConfig",
 ]
