@@ -1,0 +1,89 @@
+version: "3.8"
+
+services:
+    # Seraph MCP Server (stdio MCP protocol)
+    # Note: This docker-compose is for development infrastructure only.
+    # The MCP server runs via fastmcp CLI on the host or in a separate container.
+    seraph-mcp:
+        build: .
+        container_name: seraph-mcp-dev
+        environment:
+            # Core Configuration
+            - ENVIRONMENT=development
+            - LOG_LEVEL=INFO
+
+            # Cache Configuration
+            - CACHE_BACKEND=redis
+            - CACHE_NAMESPACE=seraph
+            - CACHE_TTL_SECONDS=3600
+            - CACHE_MAX_SIZE=1000
+
+            # Redis connection (points to redis service)
+            - REDIS_URL=redis://redis:6379/0
+            - REDIS_MAX_CONNECTIONS=20
+            - REDIS_SOCKET_TIMEOUT=5
+
+            # Observability
+            - OBSERVABILITY_BACKEND=simple
+            - ENABLE_METRICS=true
+            - ENABLE_TRACING=false
+
+            # Optimization (plugin-provided)
+            - ENABLE_OPTIMIZATION=false
+            - OPTIMIZATION_MODE=balanced
+            - QUALITY_THRESHOLD=0.90
+            - MAX_OVERHEAD_MS=100.0
+
+            # Budget enforcement (plugin-provided)
+            - ENABLE_BUDGET_ENFORCEMENT=false
+
+            # Security
+            - ENABLE_AUTH=false
+            - ALLOWED_HOSTS=*
+
+            # Development
+            - DEBUG=false
+        depends_on:
+            redis:
+                condition: service_healthy
+        volumes:
+            - ./data:/app/data
+            - ./logs:/app/logs
+        restart: unless-stopped
+        command: ["fastmcp", "dev", "src/server.py"]
+
+    # Redis Stack for cache backend
+    redis:
+        image: redis/redis-stack-server:latest
+        container_name: seraph-redis-dev
+        ports:
+            - "6379:6379"
+        volumes:
+            - redis_data:/data
+        restart: unless-stopped
+        healthcheck:
+            test: ["CMD", "redis-cli", "ping"]
+            interval: 10s
+            timeout: 5s
+            retries: 5
+            start_period: 30s
+
+    # RedisInsight for Redis management (optional)
+    redisinsight:
+        image: redis/redisinsight:latest
+        container_name: seraph-redisinsight-dev
+        ports:
+            - "8001:8001"
+        depends_on:
+            - redis
+        restart: unless-stopped
+        environment:
+            - REDIS_HOST=redis
+            - REDIS_PORT=6379
+
+volumes:
+    redis_data:
+
+networks:
+    default:
+        name: seraph-mcp-dev-network

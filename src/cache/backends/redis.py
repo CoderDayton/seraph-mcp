@@ -1,0 +1,299 @@
+"""
+Seraph MCP — Redis Cache Backend
+
+Asynchronous Redis cache implementation with:
+- JSON serialization for values
+- Per-key TTL support
+- Namespace prefixing for safe multi-tenant usage
+- Batch operations using Redis pipelines (mget, set/delete in batches)
+
+Requires: redis>=4.2 with asyncio support
+
+Example:
+    cache = RedisCacheBackend(redis_url="redis://localhost:6379", namespace="seraph", default_ttl=3600)
+    await cache.set("greeting", {"msg": "hello"}, ttl=60)
+    val = await cache.get("greeting")
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+from typing import Any, Optional
+
+from ..interface import CacheInterface
+
+try:
+    # redis-py asyncio client (v4+)
+    from redis.asyncio import Redis
+except Exception as e:  # pragma: no cover
+    raise RuntimeError(
+        "Redis async client is required. Install via `pip install redis` (v4+)."
+    ) from e
+
+
+class RedisCacheBackend(CacheInterface):
+    """
+    Redis cache backend with JSON serialization and TTL.
+
+    Notes:
+    - Keys are prefixed with the configured namespace to avoid collisions.
+    - Values are stored as UTF-8 JSON strings.
+    - TTL is applied via Redis EX seconds (None -> default_ttl, 0 -> no expiry).
+    - Batch operations use pipelining to reduce round-trips.
+    """
+
+    def __init__(
+        self,
+        redis_url: str,
+        namespace: str = "seraph",
+        default_ttl: int = 3600,
+        max_connections: int = 10,
+        socket_timeout: int = 5,
+        decode_responses: bool = True,
+    ) -> None:
+        """
+        Initialize Redis cache backend.
+
+        Args:
+            redis_url: Connection URL, e.g., redis://localhost:6379/0 or rediss:// for TLS
+            namespace: Prefix for all keys (e.g., "seraph")
+            default_ttl: Default TTL in seconds (0 => no expiry)
+            max_connections: Connection pool size
+            socket_timeout: Socket timeout in seconds
+            decode_responses: If True, values returned as str, not bytes
+        """
+        if not redis_url:
+            raise ValueError("redis_url is required")
+
+        self.namespace = namespace.strip() or "seraph"
+        self.default_ttl = max(0, int(default_ttl))
+        self._hits = 0
+        self._misses = 0
+        self._sets = 0
+        self._deletes = 0
+
+        # Create Redis client (lazy connection; connects on first command)
+        self._client: Redis = Redis.from_url(
+            redis_url,
+            decode_responses=decode_responses,
+            max_connections=max_connections,
+            socket_timeout=socket_timeout,
+        )
+
+        # Lock for any client-protected sequences if needed
+        self._lock = asyncio.Lock()
+
+    # ------------ Helpers ------------
+
+    def _make_key(self, key: str) -> str:
+        """Create namespaced key."""
+        return f"{self.namespace}:{key}"
+
+    @staticmethod
+    def _to_json(value: Any) -> str:
+        """Serialize value to JSON string."""
+        return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+
+    @staticmethod
+    def _from_json(data: Optional[str]) -> Optional[Any]:
+        """Deserialize JSON string to Python object. Returns None if data is None."""
+        if data is None:
+            return None
+        try:
+            return json.loads(data)
+        except Exception:
+            # If not valid JSON, return raw data as-is
+            return data
+
+    def _ttl_seconds(self, ttl: Optional[int]) -> Optional[int]:
+        """
+        Normalize TTL:
+        - None -> default_ttl
+        - 0 or negative -> no expiry (return None)
+        - positive -> provided ttl
+        """
+        if ttl is None:
+            ttl = self.default_ttl
+        ttl = int(ttl)
+        return ttl if ttl > 0 else None
+
+    # ------------ Core Interface ------------
+
+    async def get(self, key: str) -> Optional[Any]:
+        """Retrieve a value by key."""
+        ns_key = self._make_key(key)
+        data = await self._client.get(ns_key)
+        if data is None:
+            self._misses += 1
+            return None
+
+        self._hits += 1
+        return self._from_json(data)
+
+    async def set(self, key: str, value: Any, ttl: Optional[int] = None) -> bool:
+        """Store a value with optional TTL."""
+        ns_key = self._make_key(key)
+        ex = self._ttl_seconds(ttl)
+        payload = self._to_json(value)
+        # redis-py returns True or 'OK' depending on decode_responses
+        res = await self._client.set(name=ns_key, value=payload, ex=ex)
+        success = bool(res)  # True or 'OK'
+        if success:
+            self._sets += 1
+        return success
+
+    async def delete(self, key: str) -> bool:
+        """Delete a single key."""
+        ns_key = self._make_key(key)
+        deleted = await self._client.delete(ns_key)
+        if deleted:
+            self._deletes += 1
+        return bool(deleted)
+
+    async def exists(self, key: str) -> bool:
+        """Check if a key exists."""
+        ns_key = self._make_key(key)
+        return bool(await self._client.exists(ns_key))
+
+    async def clear(self) -> bool:
+        """
+        Clear all entries under the namespace.
+
+        Implementation: SCAN match "<namespace>:*" and DEL in batches.
+        """
+        pattern = f"{self.namespace}:*"
+        cursor = 0
+        total_deleted = 0
+        # Use batches to avoid large single DEL calls
+        batch_size = 1000
+
+        while True:
+            cursor, keys = await self._client.scan(cursor=cursor, match=pattern, count=batch_size)
+            if keys:
+                # DEL supports multiple keys, but keep batches reasonable
+                # Note: delete returns number of keys removed
+                total_deleted += await self._client.delete(*keys)
+            if cursor == 0:
+                break
+
+        self._deletes += total_deleted
+        return True
+
+    async def get_stats(self) -> dict[str, Any]:
+        """Return cache statistics and basic Redis info."""
+        stats: dict[str, Any] = {
+            "backend": "redis",
+            "namespace": self.namespace,
+            "default_ttl": self.default_ttl,
+            "hits": self._hits,
+            "misses": self._misses,
+            "hit_rate": 0.0,
+            "sets": self._sets,
+            "deletes": self._deletes,
+            "connected": False,
+        }
+
+        total_requests = self._hits + self._misses
+        stats["hit_rate"] = round((self._hits / total_requests) * 100, 2) if total_requests else 0.0
+
+        try:
+            # PING to check connectivity
+            pong = await self._client.ping()
+            stats["connected"] = bool(pong)
+
+            # Fetch minimal INFO for insight (server + keyspace)
+            info = await self._client.info(section="server")
+            keyspace = await self._client.info(section="keyspace")
+
+            stats["redis_version"] = info.get("redis_version")
+            stats["redis_mode"] = info.get("redis_mode")
+            stats["os"] = info.get("os")
+            # Keyspace counters (approx)
+            # DB-specific stats are under 'db0', 'db1', etc.; not filtered by namespace.
+            # Provide raw info so callers can inspect if needed.
+            stats["keyspace"] = keyspace
+        except Exception:
+            # If INFO is restricted or fails, keep minimal stats
+            pass
+
+        return stats
+
+    async def close(self) -> None:
+        """Close the Redis client and release resources."""
+        try:
+            await self._client.close()
+        finally:
+            # Ensure pool disconnect
+            try:
+                await self._client.connection_pool.disconnect()  # type: ignore[attr-defined]
+            except Exception:
+                pass
+
+    # ------------ Batch operations (pipeline) ------------
+
+    async def get_many(self, keys: list[str]) -> dict[str, Any]:
+        """
+        Retrieve multiple values in one round-trip using MGET.
+        Missing keys are omitted from the result.
+        """
+        if not keys:
+            return {}
+
+        ns_keys = [self._make_key(k) for k in keys]
+        values = await self._client.mget(ns_keys)
+
+        result: dict[str, Any] = {}
+        # mget preserves order
+        for k, raw in zip(keys, values):
+            if raw is None:
+                self._misses += 1
+                continue
+            self._hits += 1
+            result[k] = self._from_json(raw)
+
+        return result
+
+    async def set_many(self, items: dict[str, Any], ttl: Optional[int] = None) -> int:
+        """
+        Store multiple values using a pipeline. Applies the same TTL to all items.
+        Returns number of items successfully stored.
+        """
+        if not items:
+            return 0
+
+        ex = self._ttl_seconds(ttl)
+        pipe = self._client.pipeline(transaction=False)
+
+        for key, value in items.items():
+            ns_key = self._make_key(key)
+            payload = self._to_json(value)
+            pipe.set(ns_key, payload, ex=ex)
+
+        results = await pipe.execute()
+        # Results are ["OK" | True | 1 | None...] depending on server/config
+        success_count = sum(1 for r in results if r in (True, "OK", b"OK"))
+        self._sets += success_count
+        return success_count
+
+    async def delete_many(self, keys: list[str]) -> int:
+        """
+        Delete multiple keys using a pipeline.
+        Returns number of keys successfully deleted.
+        """
+        if not keys:
+            return 0
+
+        ns_keys = [self._make_key(k) for k in keys]
+        # Redis DEL variadic returns count; pipeline may return counts per op if separate
+        # Prefer a single DEL for all keys when reasonable; if too large, chunk.
+        deleted_total = 0
+        chunk_size = 1000
+
+        for i in range(0, len(ns_keys), chunk_size):
+            chunk = ns_keys[i : i + chunk_size]
+            # A single DEL for the chunk
+            deleted_total += int(await self._client.delete(*chunk))
+
+        self._deletes += deleted_total
+        return deleted_total
