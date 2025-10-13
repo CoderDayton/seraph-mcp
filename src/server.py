@@ -13,15 +13,13 @@ Following SDD.md mandatory rules:
 - Monolithic architecture with feature flags for enabling/disabling capabilities
 """
 
-import asyncio
 import logging
-from typing import Any, Optional
+from typing import Any
 
 from fastmcp import FastMCP
 
 from .cache import close_all_caches, create_cache
 from .config import load_config
-from .errors import SeraphError
 from .observability import get_observability, initialize_observability
 from .token_optimization.tools import get_tools as get_token_optimization_tools
 
@@ -97,7 +95,7 @@ async def get_cache_stats() -> dict[str, Any]:
 
 
 @mcp.tool()
-async def cache_get(key: str) -> Optional[Any]:
+async def cache_get(key: str) -> Any | None:
     """
     Retrieve value from cache.
 
@@ -124,7 +122,7 @@ async def cache_get(key: str) -> Optional[Any]:
 
 
 @mcp.tool()
-async def cache_set(key: str, value: Any, ttl: Optional[int] = None) -> bool:
+async def cache_set(key: str, value: Any, ttl: int | None = None) -> bool:
     """
     Store value in cache.
 
@@ -218,9 +216,9 @@ async def get_metrics() -> dict[str, Any]:
 @mcp.tool()
 async def optimize_tokens(
     content: str,
-    target_reduction: Optional[float] = None,
+    target_reduction: float | None = None,
     model: str = "gpt-4",
-    strategies: Optional[list[str]] = None,
+    strategies: list[str] | None = None,
 ) -> dict[str, Any]:
     """
     Optimize content to reduce token count while preserving quality.
@@ -283,7 +281,7 @@ async def estimate_cost(
     content: str,
     model: str,
     operation: str = "completion",
-    output_tokens: Optional[int] = None,
+    output_tokens: int | None = None,
 ) -> dict[str, Any]:
     """
     Estimate cost for LLM API call.
@@ -368,6 +366,7 @@ async def initialize_server():
         # Initialize token optimization if enabled
         if config.features.token_optimization:
             from .token_optimization.config import TokenOptimizationConfig
+
             token_config = TokenOptimizationConfig(**config.token_optimization.model_dump())
             _token_optimization_tools = get_token_optimization_tools(config=token_config)
             logger.info("Token optimization tools initialized")
@@ -376,18 +375,21 @@ async def initialize_server():
 
         # Record startup
         obs.increment("server.startup")
-        obs.event("server_started", {
-            "environment": config.environment,
-            "cache_backend": config.cache.backend,
-            "features_enabled": {
-                "token_optimization": config.features.token_optimization,
-                "model_routing": config.features.model_routing,
-                "semantic_cache": config.features.semantic_cache,
-                "context_optimization": config.features.context_optimization,
-                "budget_management": config.features.budget_management,
-                "quality_preservation": config.features.quality_preservation,
+        obs.event(
+            "server_started",
+            {
+                "environment": config.environment,
+                "cache_backend": config.cache.backend,
+                "features_enabled": {
+                    "token_optimization": config.features.token_optimization,
+                    "model_routing": config.features.model_routing,
+                    "semantic_cache": config.features.semantic_cache,
+                    "context_optimization": config.features.context_optimization,
+                    "budget_management": config.features.budget_management,
+                    "quality_preservation": config.features.quality_preservation,
+                },
             },
-        })
+        )
 
         _initialized = True
         logger.info("Seraph MCP server initialized successfully")

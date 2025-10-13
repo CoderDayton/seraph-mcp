@@ -10,9 +10,6 @@ Integration tests for the cache factory, covering:
 - Error handling for missing Redis configuration
 """
 
-import os
-from typing import Any
-
 import pytest
 
 from src.cache import close_all_caches, create_cache, reset_cache_factory
@@ -162,12 +159,7 @@ class TestCacheFactorySingleton:
 class TestCacheFactoryBackendSwitching:
     """Test switching between backends."""
 
-    async def test_switch_from_memory_to_redis(
-        self,
-        monkeypatch,
-        test_redis_url,
-        redis_client
-    ):
+    async def test_switch_from_memory_to_redis(self, monkeypatch, test_redis_url, redis_client):
         """Test switching from memory to Redis backend."""
         # Start with memory
         monkeypatch.setenv("CACHE_BACKEND", "memory")
@@ -198,12 +190,7 @@ class TestCacheFactoryBackendSwitching:
         result = await cache2.get("redis_key")
         assert result == "redis_value"
 
-    async def test_switch_from_redis_to_memory(
-        self,
-        monkeypatch,
-        test_redis_url,
-        redis_client
-    ):
+    async def test_switch_from_redis_to_memory(self, monkeypatch, test_redis_url, redis_client):
         """Test switching from Redis to memory backend."""
         # Start with Redis
         monkeypatch.setenv("CACHE_BACKEND", "redis")
@@ -264,12 +251,7 @@ class TestCacheFactoryNamespaceIsolation:
         result = await cache2.get("shared_key")
         assert result == "app2_value"
 
-    async def test_redis_namespace_isolation(
-        self,
-        monkeypatch,
-        test_redis_url,
-        redis_client
-    ):
+    async def test_redis_namespace_isolation(self, monkeypatch, test_redis_url, redis_client):
         """Test that different namespaces are isolated in Redis."""
         # Create first cache with namespace 'service1'
         monkeypatch.setenv("CACHE_BACKEND", "redis")
@@ -384,7 +366,12 @@ class TestCacheFactoryConfiguration:
     async def test_default_values_when_not_configured(self, monkeypatch):
         """Test default values when environment not set."""
         # Clear relevant env vars
-        for key in ["CACHE_BACKEND", "CACHE_TTL_SECONDS", "CACHE_MAX_SIZE", "CACHE_NAMESPACE"]:
+        for key in [
+            "CACHE_BACKEND",
+            "CACHE_TTL_SECONDS",
+            "CACHE_MAX_SIZE",
+            "CACHE_NAMESPACE",
+        ]:
             monkeypatch.delenv(key, raising=False)
 
         cache = create_cache()

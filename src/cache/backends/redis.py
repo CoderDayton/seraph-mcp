@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from typing import Any, Optional
+from typing import Any
 
 from ..interface import CacheInterface
 
@@ -27,9 +27,7 @@ try:
     # redis-py asyncio client (v4+)
     from redis.asyncio import Redis
 except Exception as e:  # pragma: no cover
-    raise RuntimeError(
-        "Redis async client is required. Install via `pip install redis` (v4+)."
-    ) from e
+    raise RuntimeError("Redis async client is required. Install via `pip install redis` (v4+).") from e
 
 
 class RedisCacheBackend(CacheInterface):
@@ -96,7 +94,7 @@ class RedisCacheBackend(CacheInterface):
         return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
 
     @staticmethod
-    def _from_json(data: Optional[str]) -> Optional[Any]:
+    def _from_json(data: str | None) -> Any | None:
         """Deserialize JSON string to Python object. Returns None if data is None."""
         if data is None:
             return None
@@ -106,7 +104,7 @@ class RedisCacheBackend(CacheInterface):
             # If not valid JSON, return raw data as-is
             return data
 
-    def _ttl_seconds(self, ttl: Optional[int]) -> Optional[int]:
+    def _ttl_seconds(self, ttl: int | None) -> int | None:
         """
         Normalize TTL:
         - None -> default_ttl
@@ -120,7 +118,7 @@ class RedisCacheBackend(CacheInterface):
 
     # ------------ Core Interface ------------
 
-    async def get(self, key: str) -> Optional[Any]:
+    async def get(self, key: str) -> Any | None:
         """Retrieve a value by key."""
         ns_key = self._make_key(key)
         data = await self._client.get(ns_key)
@@ -131,7 +129,7 @@ class RedisCacheBackend(CacheInterface):
         self._hits += 1
         return self._from_json(data)
 
-    async def set(self, key: str, value: Any, ttl: Optional[int] = None) -> bool:
+    async def set(self, key: str, value: Any, ttl: int | None = None) -> bool:
         """Store a value with optional TTL."""
         ns_key = self._make_key(key)
         ex = self._ttl_seconds(ttl)
@@ -245,7 +243,7 @@ class RedisCacheBackend(CacheInterface):
 
         result: dict[str, Any] = {}
         # mget preserves order
-        for k, raw in zip(keys, values):
+        for k, raw in zip(keys, values, strict=False):
             if raw is None:
                 self._misses += 1
                 continue
@@ -254,7 +252,7 @@ class RedisCacheBackend(CacheInterface):
 
         return result
 
-    async def set_many(self, items: dict[str, Any], ttl: Optional[int] = None) -> int:
+    async def set_many(self, items: dict[str, Any], ttl: int | None = None) -> int:
         """
         Store multiple values using a pipeline. Applies the same TTL to all items.
         Returns number of items successfully stored.

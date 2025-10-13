@@ -29,12 +29,13 @@ Examples:
 from __future__ import annotations
 
 import logging
-from typing import Optional
 
 from ..config import CacheBackend, CacheConfig, get_config
 from ..errors import ConfigurationError
+from .backends.memory import (
+    MemoryCacheBackend,  # Import memory eagerly (always available)
+)
 from .interface import CacheInterface
-from .backends.memory import MemoryCacheBackend  # Import memory eagerly (always available)
 
 logger = logging.getLogger(__name__)
 
@@ -65,10 +66,9 @@ def _create_redis_cache(config: CacheConfig) -> CacheInterface:
         from .backends.redis import RedisCacheBackend  # type: ignore
     except Exception as e:
         raise ConfigurationError(
-            "Redis backend selected but redis client is unavailable. "
-            "Install the 'redis' package (v4+).",
+            "Redis backend selected but redis client is unavailable. Install the 'redis' package (v4+).",
             details={"package": "redis>=4.0.0", "error": str(e)},
-        )
+        ) from e
 
     return RedisCacheBackend(
         redis_url=config.redis_url,
@@ -80,7 +80,7 @@ def _create_redis_cache(config: CacheConfig) -> CacheInterface:
 
 
 def create_cache(
-    config: Optional[CacheConfig] = None,
+    config: CacheConfig | None = None,
     name: str = "default",
 ) -> CacheInterface:
     """
@@ -124,7 +124,10 @@ def create_cache(
         else:
             raise ConfigurationError(
                 f"Unknown cache backend: {config.backend}",
-                details={"backend": str(config.backend), "supported": ["memory", "redis"]},
+                details={
+                    "backend": str(config.backend),
+                    "supported": ["memory", "redis"],
+                },
             )
 
         # Store instance in registry

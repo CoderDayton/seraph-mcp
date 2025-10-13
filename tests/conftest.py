@@ -6,7 +6,7 @@ Provides pytest configuration and shared fixtures for unit and integration tests
 
 import asyncio
 import os
-from typing import AsyncGenerator, Generator
+from collections.abc import AsyncGenerator, Generator
 
 import pytest
 from redis.asyncio import Redis

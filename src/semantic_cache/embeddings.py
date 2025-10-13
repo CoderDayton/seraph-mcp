@@ -12,9 +12,8 @@ Per SDD.md:
 """
 
 import logging
-from typing import Dict, List, Optional
 
-from ..providers import CompletionRequest, ProviderConfig, create_provider
+from ..providers import ProviderConfig, create_provider
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +32,7 @@ class EmbeddingGenerator:
         self,
         provider_name: str = "local",
         model_name: str = "all-MiniLM-L6-v2",
-        provider_config: Optional[ProviderConfig] = None,
+        provider_config: ProviderConfig | None = None,
         cache_embeddings: bool = True,
     ):
         """
@@ -49,7 +48,7 @@ class EmbeddingGenerator:
         self.model_name = model_name
         self.provider_config = provider_config
         self.cache_embeddings = cache_embeddings
-        self._cache: Dict[str, List[float]] = {} if cache_embeddings else {}
+        self._cache: dict[str, list[float]] = {} if cache_embeddings else {}
         self._provider = None
         self._local_model = None
 
@@ -66,18 +65,17 @@ class EmbeddingGenerator:
         """Initialize local sentence-transformers model."""
         try:
             from sentence_transformers import SentenceTransformer
-        except ImportError:
+        except ImportError as e:
             raise RuntimeError(
-                "sentence-transformers not installed. "
-                "Install with: pip install sentence-transformers"
-            )
+                "sentence-transformers not installed. Install with: pip install sentence-transformers"
+            ) from e
 
         logger.info(f"Loading local embedding model: {self.model_name}")
         try:
             self._local_model = SentenceTransformer(self.model_name)
             logger.info(f"Local embedding model loaded: {self.model_name}")
         except Exception as e:
-            raise RuntimeError(f"Failed to load local model {self.model_name}: {e}")
+            raise RuntimeError(f"Failed to load local model {self.model_name}: {e}") from e
 
     def _initialize_provider(self) -> None:
         """Initialize provider for embeddings."""
@@ -88,20 +86,20 @@ class EmbeddingGenerator:
             self._provider = create_provider(self.provider_name, self.provider_config)
             logger.info(f"Embedding provider initialized: {self.provider_name}")
         except Exception as e:
-            raise RuntimeError(f"Failed to initialize provider {self.provider_name}: {e}")
+            raise RuntimeError(f"Failed to initialize provider {self.provider_name}: {e}") from e
 
-    def _get_from_cache(self, text: str) -> Optional[List[float]]:
+    def _get_from_cache(self, text: str) -> list[float] | None:
         """Get embedding from cache if available."""
         if not self.cache_embeddings:
             return None
         return self._cache.get(text)
 
-    def _add_to_cache(self, text: str, embedding: List[float]) -> None:
+    def _add_to_cache(self, text: str, embedding: list[float]) -> None:
         """Add embedding to cache."""
         if self.cache_embeddings:
             self._cache[text] = embedding
 
-    async def generate(self, text: str) -> List[float]:
+    async def generate(self, text: str) -> list[float]:
         """
         Generate embedding for text.
 
@@ -127,15 +125,15 @@ class EmbeddingGenerator:
 
         return embedding
 
-    def _generate_local(self, text: str) -> List[float]:
+    def _generate_local(self, text: str) -> list[float]:
         """Generate embedding using local sentence-transformers model."""
         try:
             embedding = self._local_model.encode(text, convert_to_numpy=True)
             return embedding.tolist()
         except Exception as e:
-            raise RuntimeError(f"Failed to generate local embedding: {e}")
+            raise RuntimeError(f"Failed to generate local embedding: {e}") from e
 
-    async def _generate_via_provider(self, text: str) -> List[float]:
+    async def _generate_via_provider(self, text: str) -> list[float]:
         """Generate embedding using provider system."""
         if self.provider_name == "openai":
             return await self._generate_openai_embedding(text)
@@ -144,7 +142,7 @@ class EmbeddingGenerator:
         else:
             raise ValueError(f"Unsupported provider for embeddings: {self.provider_name}")
 
-    async def _generate_openai_embedding(self, text: str) -> List[float]:
+    async def _generate_openai_embedding(self, text: str) -> list[float]:
         """Generate embedding using OpenAI embeddings API."""
         try:
             # Use OpenAI's embeddings endpoint directly
@@ -154,9 +152,9 @@ class EmbeddingGenerator:
             )
             return response.data[0].embedding
         except Exception as e:
-            raise RuntimeError(f"Failed to generate OpenAI embedding: {e}")
+            raise RuntimeError(f"Failed to generate OpenAI embedding: {e}") from e
 
-    async def _generate_compatible_embedding(self, text: str) -> List[float]:
+    async def _generate_compatible_embedding(self, text: str) -> list[float]:
         """Generate embedding using OpenAI-compatible endpoint."""
         try:
             # OpenAI-compatible endpoints support embeddings too
@@ -166,9 +164,9 @@ class EmbeddingGenerator:
             )
             return response.data[0].embedding
         except Exception as e:
-            raise RuntimeError(f"Failed to generate embedding via compatible endpoint: {e}")
+            raise RuntimeError(f"Failed to generate embedding via compatible endpoint: {e}") from e
 
-    async def generate_batch(self, texts: List[str]) -> List[List[float]]:
+    async def generate_batch(self, texts: list[str]) -> list[list[float]]:
         """
         Generate embeddings for multiple texts (batch processing).
 
@@ -188,13 +186,13 @@ class EmbeddingGenerator:
                 embeddings.append(embedding)
             return embeddings
 
-    def _generate_local_batch(self, texts: List[str]) -> List[List[float]]:
+    def _generate_local_batch(self, texts: list[str]) -> list[list[float]]:
         """Generate embeddings in batch using local model."""
         try:
             embeddings = self._local_model.encode(texts, convert_to_numpy=True)
             return embeddings.tolist()
         except Exception as e:
-            raise RuntimeError(f"Failed to generate batch embeddings: {e}")
+            raise RuntimeError(f"Failed to generate batch embeddings: {e}") from e
 
     def get_dimension(self) -> int:
         """
@@ -227,7 +225,7 @@ class EmbeddingGenerator:
 async def get_embedding_generator(
     provider_name: str = "local",
     model_name: str = "all-MiniLM-L6-v2",
-    provider_config: Optional[ProviderConfig] = None,
+    provider_config: ProviderConfig | None = None,
     cache_embeddings: bool = True,
 ) -> EmbeddingGenerator:
     """

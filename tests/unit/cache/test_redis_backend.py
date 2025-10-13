@@ -15,12 +15,8 @@ Comprehensive unit tests for the Redis cache backend, covering:
 
 import asyncio
 import json
-from typing import Any, Dict
-from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from redis.asyncio import Redis
-from redis.exceptions import ConnectionError, RedisError, TimeoutError
 
 from src.cache.backends.redis import RedisCacheBackend
 
@@ -296,11 +292,13 @@ class TestRedisCacheBackendBatchOperations:
         )
 
         # Pre-populate
-        await redis_client.mset({
-            "test:key1": '"value1"',
-            "test:key2": '"value2"',
-            "test:key3": '"value3"',
-        })
+        await redis_client.mset(
+            {
+                "test:key1": '"value1"',
+                "test:key2": '"value2"',
+                "test:key3": '"value3"',
+            }
+        )
 
         results = await backend.get_many(["key1", "key2", "key3"])
         assert results == {
@@ -398,11 +396,13 @@ class TestRedisCacheBackendBatchOperations:
         )
 
         # Pre-populate
-        await redis_client.mset({
-            "test:key1": '"value1"',
-            "test:key2": '"value2"',
-            "test:key3": '"value3"',
-        })
+        await redis_client.mset(
+            {
+                "test:key1": '"value1"',
+                "test:key2": '"value2"',
+                "test:key3": '"value3"',
+            }
+        )
 
         count = await backend.delete_many(["key1", "key2", "key3"])
         assert count == 3
@@ -465,12 +465,14 @@ class TestRedisCacheBackendClear:
         )
 
         # Add keys in different namespaces
-        await redis_client.mset({
-            "app1:key1": '"value1"',
-            "app1:key2": '"value2"',
-            "app2:key1": '"value1"',  # Different namespace
-            "global:key": '"value"',   # No namespace prefix
-        })
+        await redis_client.mset(
+            {
+                "app1:key1": '"value1"',
+                "app1:key2": '"value2"',
+                "app2:key1": '"value1"',  # Different namespace
+                "global:key": '"value"',  # No namespace prefix
+            }
+        )
 
         success = await backend.clear()
         assert success is True
@@ -504,7 +506,7 @@ class TestRedisCacheBackendClear:
         chunk_size = 1000
         items = list(data.items())
         for i in range(0, len(items), chunk_size):
-            chunk = dict(items[i:i + chunk_size])
+            chunk = dict(items[i : i + chunk_size])
             await redis_client.mset(chunk)
 
         success = await backend.clear()
@@ -696,16 +698,10 @@ class TestRedisCacheBackendEdgeCases:
             return await backend.get(key)
 
         # Set 100 keys concurrently
-        await asyncio.gather(*[
-            set_value(f"key{i}", f"value{i}")
-            for i in range(100)
-        ])
+        await asyncio.gather(*[set_value(f"key{i}", f"value{i}") for i in range(100)])
 
         # Get all keys concurrently
-        results = await asyncio.gather(*[
-            get_value(f"key{i}")
-            for i in range(100)
-        ])
+        results = await asyncio.gather(*[get_value(f"key{i}") for i in range(100)])
 
         # Verify all values
         for i, result in enumerate(results):

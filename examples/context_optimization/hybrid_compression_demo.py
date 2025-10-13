@@ -19,12 +19,11 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from src.context_optimization import (
-    ContextOptimizer,
     ContextOptimizationConfig,
+    ContextOptimizer,
     SeraphCompressor,
 )
 from src.providers import OpenAIProvider, ProviderConfig
-
 
 # Sample content of different sizes
 SHORT_CONTENT = """
@@ -33,7 +32,8 @@ debug issues, and even optimize their own performance. The future of
 programming involves more collaboration between humans and AI systems.
 """
 
-MEDIUM_CONTENT = """
+MEDIUM_CONTENT = (
+    """
 # AI Optimization Best Practices
 
 ## Token Management
@@ -55,9 +55,12 @@ compression for one-shot requests requiring nuance.
 Balance compression ratio against quality. Aggressive compression saves
 money but may lose nuance. Conservative compression preserves quality
 but saves less. Use hybrid approaches for best results.
-""" * 10  # ~3k tokens
+"""
+    * 10
+)  # ~3k tokens
 
-LONG_CONTENT = """
+LONG_CONTENT = (
+    """
 # Comprehensive AI System Architecture Guide
 
 ## Introduction
@@ -127,7 +130,9 @@ Never log sensitive data. Use environment variables for secrets.
 Building robust AI systems requires attention to detail across multiple
 dimensions. Use the patterns and practices in this guide to create
 production-ready applications.
-""" * 20  # ~10k tokens
+"""
+    * 20
+)  # ~10k tokens
 
 
 async def demo_ai_compression():
@@ -157,7 +162,7 @@ async def demo_ai_compression():
     result = await optimizer.optimize(SHORT_CONTENT)
     elapsed_ms = (time.perf_counter() - start) * 1000
 
-    print(f"\nResults:")
+    print("\nResults:")
     print(f"  Method: {result.method}")
     print(f"  Tokens saved: {result.tokens_saved}")
     print(f"  Reduction: {result.reduction_percentage:.1f}%")
@@ -182,8 +187,8 @@ async def demo_seraph_compression():
         compression_method="seraph",
         seraph_token_threshold=3000,
         seraph_l1_ratio=0.002,  # Ultra-small skeleton
-        seraph_l2_ratio=0.01,   # Compact abstracts
-        seraph_l3_ratio=0.05,   # Factual extracts
+        seraph_l2_ratio=0.01,  # Compact abstracts
+        seraph_l3_ratio=0.05,  # Factual extracts
         quality_threshold=0.90,
         max_overhead_ms=100.0,
     )
@@ -196,7 +201,7 @@ async def demo_seraph_compression():
     result1 = await optimizer.optimize(LONG_CONTENT)
     elapsed_ms1 = (time.perf_counter() - start) * 1000
 
-    print(f"\nFirst compression (cold start):")
+    print("\nFirst compression (cold start):")
     print(f"  Method: {result1.method}")
     print(f"  Tokens saved: {result1.tokens_saved}")
     print(f"  Reduction: {result1.reduction_percentage:.1f}%")
@@ -208,13 +213,14 @@ async def demo_seraph_compression():
     result2 = await optimizer.optimize(LONG_CONTENT)
     elapsed_ms2 = (time.perf_counter() - start) * 1000
 
-    print(f"\nSecond compression (cached):")
+    print("\nSecond compression (cached):")
     print(f"  Time: {elapsed_ms2:.1f}ms")
     print(f"  Speedup: {elapsed_ms1 / elapsed_ms2:.1f}x faster")
+    print(f"  Compression ratio: {result2.compression_ratio:.1%}")
 
     # Show multi-layer structure
-    print(f"\nMulti-layer structure:")
-    if hasattr(optimizer, 'seraph_cache') and optimizer.seraph_cache:
+    print("\nMulti-layer structure:")
+    if hasattr(optimizer, "seraph_cache") and optimizer.seraph_cache:
         cached_data = list(optimizer.seraph_cache.values())[0]
         print(f"  L1 (skeleton): {len(cached_data['l1'])} chars")
         print(f"  L2 (abstracts): {len(cached_data['l2'])} chars")
@@ -248,7 +254,7 @@ async def demo_hybrid_compression():
     result = await optimizer.optimize(MEDIUM_CONTENT)
     elapsed_ms = (time.perf_counter() - start) * 1000
 
-    print(f"\nResults:")
+    print("\nResults:")
     print(f"  Method: {result.method}")
     print(f"  Tokens saved: {result.tokens_saved}")
     print(f"  Reduction: {result.reduction_percentage:.1f}%")
@@ -256,10 +262,10 @@ async def demo_hybrid_compression():
     print(f"  Time: {elapsed_ms:.1f}ms")
     print(f"  Validation passed: {result.validation_passed}")
 
-    print(f"\nHow it works:")
-    print(f"  1. Seraph pre-compresses to L2 (deterministic structure)")
-    print(f"  2. AI polishes the compressed content (semantic enhancement)")
-    print(f"  3. Quality validation ensures improvement")
+    print("\nHow it works:")
+    print("  1. Seraph pre-compresses to L2 (deterministic structure)")
+    print("  2. AI polishes the compressed content (semantic enhancement)")
+    print("  3. Quality validation ensures improvement")
 
 
 async def demo_auto_selection():
@@ -296,7 +302,7 @@ async def demo_auto_selection():
 
     # Show statistics
     stats = optimizer.get_stats()
-    print(f"\nMethod usage statistics:")
+    print("\nMethod usage statistics:")
     print(f"  AI compressions: {stats['method_usage']['ai']}")
     print(f"  Seraph compressions: {stats['method_usage']['seraph']}")
     print(f"  Hybrid compressions: {stats['method_usage']['hybrid']}")
@@ -312,29 +318,29 @@ async def demo_seraph_standalone():
     # Create standalone compressor
     compressor = SeraphCompressor(seed=7)
 
-    print(f"\nCompressing long document...")
+    print("\nCompressing long document...")
     start = time.perf_counter()
     result = compressor.build(LONG_CONTENT)
     elapsed_ms = (time.perf_counter() - start) * 1000
 
     print(f"\nCompression complete in {elapsed_ms:.1f}ms")
-    print(f"\nLayer sizes:")
+    print("\nLayer sizes:")
     print(f"  L1: {len(result.l1)} chars ({result.manifest['budgets']['L1']} tokens)")
     print(f"  L2: {len(result.l2)} chars ({result.manifest['budgets']['L2']} tokens)")
     print(f"  L3: {len(result.l3)} chars ({result.manifest['budgets']['L3']} tokens)")
 
-    print(f"\nManifest:")
+    print("\nManifest:")
     print(f"  Total original tokens: {result.manifest['total_tokens']}")
     print(f"  Chunks created: {result.manifest['chunks']}")
     print(f"  Anchors extracted: {result.manifest['anchors']}")
 
     # Demonstrate querying
-    print(f"\nQuerying L3 layer:")
+    print("\nQuerying L3 layer:")
     question = "What are the performance targets?"
     top_results = compressor.query(result, question, k=3)
 
     print(f"  Query: '{question}'")
-    print(f"  Top results:")
+    print("  Top results:")
     for score, text in top_results[:3]:
         print(f"    Score {score:.3f}: {text[:80]}...")
 

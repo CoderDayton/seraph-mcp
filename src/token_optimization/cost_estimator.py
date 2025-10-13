@@ -7,9 +7,8 @@ Includes real-time pricing data and cost comparison utilities.
 
 import logging
 from dataclasses import dataclass
-from datetime import datetime
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from .counter import get_token_counter
 
@@ -18,6 +17,7 @@ logger = logging.getLogger(__name__)
 
 class PricingTier(str, Enum):
     """Pricing tiers for different model capabilities."""
+
     FREE = "free"
     BUDGET = "budget"
     STANDARD = "standard"
@@ -38,11 +38,7 @@ class ModelPricing:
     supports_streaming: bool
     last_updated: str
 
-    def calculate_cost(
-        self,
-        input_tokens: int,
-        output_tokens: int
-    ) -> float:
+    def calculate_cost(self, input_tokens: int, output_tokens: int) -> float:
         """
         Calculate total cost for token usage.
 
@@ -67,7 +63,7 @@ class CostEstimator:
     """
 
     # Pricing database (USD per 1K tokens)
-    PRICING_DATABASE: Dict[str, ModelPricing] = {
+    PRICING_DATABASE: dict[str, ModelPricing] = {
         # OpenAI GPT-4 models
         "gpt-4": ModelPricing(
             model_name="gpt-4",
@@ -109,7 +105,6 @@ class CostEstimator:
             supports_streaming=True,
             last_updated="2024-01",
         ),
-
         # OpenAI GPT-3.5 models
         "gpt-3.5-turbo": ModelPricing(
             model_name="gpt-3.5-turbo",
@@ -121,7 +116,6 @@ class CostEstimator:
             supports_streaming=True,
             last_updated="2024-01",
         ),
-
         # Anthropic Claude models
         "claude-3-opus": ModelPricing(
             model_name="claude-3-opus",
@@ -173,7 +167,6 @@ class CostEstimator:
             supports_streaming=True,
             last_updated="2024-01",
         ),
-
         # Google Gemini models
         "gemini-pro": ModelPricing(
             model_name="gemini-pro",
@@ -205,7 +198,6 @@ class CostEstimator:
             supports_streaming=True,
             last_updated="2024-01",
         ),
-
         # Mistral models
         "mistral-large": ModelPricing(
             model_name="mistral-large",
@@ -248,8 +240,8 @@ class CostEstimator:
         content: str,
         model: str,
         operation: str = "completion",
-        output_tokens: Optional[int] = None,
-    ) -> Dict[str, Any]:
+        output_tokens: int | None = None,
+    ) -> dict[str, Any]:
         """
         Estimate cost for an LLM API call.
 
@@ -308,9 +300,9 @@ class CostEstimator:
     def compare_model_costs(
         self,
         content: str,
-        models: Optional[List[str]] = None,
-        output_tokens: Optional[int] = None,
-    ) -> Dict[str, Any]:
+        models: list[str] | None = None,
+        output_tokens: int | None = None,
+    ) -> dict[str, Any]:
         """
         Compare costs across multiple models.
 
@@ -349,15 +341,16 @@ class CostEstimator:
         savings = None
         if cheapest and most_expensive:
             savings = {
-                "absolute_usd": round(
-                    most_expensive["total_cost_usd"] - cheapest["total_cost_usd"],
-                    6
-                ),
+                "absolute_usd": round(most_expensive["total_cost_usd"] - cheapest["total_cost_usd"], 6),
                 "percentage": round(
-                    ((most_expensive["total_cost_usd"] - cheapest["total_cost_usd"])
-                     / most_expensive["total_cost_usd"] * 100)
-                    if most_expensive["total_cost_usd"] > 0 else 0,
-                    2
+                    (
+                        (most_expensive["total_cost_usd"] - cheapest["total_cost_usd"])
+                        / most_expensive["total_cost_usd"]
+                        * 100
+                    )
+                    if most_expensive["total_cost_usd"] > 0
+                    else 0,
+                    2,
                 ),
             }
 
@@ -375,7 +368,7 @@ class CostEstimator:
         avg_input_tokens: int,
         avg_output_tokens: int,
         model: str,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Calculate projected monthly costs.
 
@@ -393,12 +386,8 @@ class CostEstimator:
             return {"error": "Pricing data not available"}
 
         # Calculate daily cost
-        daily_input_cost = (
-            daily_requests * avg_input_tokens / 1000
-        ) * pricing.input_price_per_1k
-        daily_output_cost = (
-            daily_requests * avg_output_tokens / 1000
-        ) * pricing.output_price_per_1k
+        daily_input_cost = (daily_requests * avg_input_tokens / 1000) * pricing.input_price_per_1k
+        daily_output_cost = (daily_requests * avg_output_tokens / 1000) * pricing.output_price_per_1k
         daily_cost = daily_input_cost + daily_output_cost
 
         # Project to monthly (30 days)
@@ -418,7 +407,7 @@ class CostEstimator:
             },
         }
 
-    def get_pricing_info(self, model: str) -> Optional[Dict[str, Any]]:
+    def get_pricing_info(self, model: str) -> dict[str, Any] | None:
         """
         Get pricing information for a model.
 
@@ -443,7 +432,7 @@ class CostEstimator:
             "last_updated": pricing.last_updated,
         }
 
-    def list_models_by_tier(self, tier: Optional[PricingTier] = None) -> List[str]:
+    def list_models_by_tier(self, tier: PricingTier | None = None) -> list[str]:
         """
         List models by pricing tier.
 
@@ -456,13 +445,9 @@ class CostEstimator:
         if tier is None:
             return list(self.PRICING_DATABASE.keys())
 
-        return [
-            model
-            for model, pricing in self.PRICING_DATABASE.items()
-            if pricing.tier == tier
-        ]
+        return [model for model, pricing in self.PRICING_DATABASE.items() if pricing.tier == tier]
 
-    def _get_pricing(self, model: str) -> Optional[ModelPricing]:
+    def _get_pricing(self, model: str) -> ModelPricing | None:
         """
         Get pricing for a model.
 
@@ -483,7 +468,7 @@ class CostEstimator:
 
         return None
 
-    def _generate_recommendation(self, estimates: List[Dict[str, Any]]) -> str:
+    def _generate_recommendation(self, estimates: list[dict[str, Any]]) -> str:
         """
         Generate cost optimization recommendation.
 
@@ -501,12 +486,11 @@ class CostEstimator:
         if len(estimates) == 1:
             return f"Using {cheapest['model']} (${cheapest['total_cost_usd']:.6f})"
 
-        savings_vs_most_expensive = (
-            estimates[-1]["total_cost_usd"] - cheapest["total_cost_usd"]
-        )
+        savings_vs_most_expensive = estimates[-1]["total_cost_usd"] - cheapest["total_cost_usd"]
         savings_pct = (
             savings_vs_most_expensive / estimates[-1]["total_cost_usd"] * 100
-            if estimates[-1]["total_cost_usd"] > 0 else 0
+            if estimates[-1]["total_cost_usd"] > 0
+            else 0
         )
 
         return (
@@ -516,7 +500,7 @@ class CostEstimator:
 
 
 # Singleton instance
-_estimator_instance: Optional[CostEstimator] = None
+_estimator_instance: CostEstimator | None = None
 
 
 def get_cost_estimator() -> CostEstimator:

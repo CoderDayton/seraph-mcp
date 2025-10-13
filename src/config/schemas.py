@@ -11,7 +11,6 @@ Following SDD.md:
 """
 
 from enum import Enum
-from typing import Optional
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -52,44 +51,19 @@ class LogLevel(str, Enum):
 class CacheConfig(BaseModel):
     """Cache configuration."""
 
-    backend: CacheBackend = Field(
-        default=CacheBackend.MEMORY,
-        description="Cache backend to use"
-    )
-    ttl_seconds: int = Field(
-        default=3600,
-        ge=0,
-        description="Default TTL in seconds (0 = no expiry)"
-    )
-    max_size: int = Field(
-        default=1000,
-        ge=1,
-        description="Max cache entries (memory backend)"
-    )
-    namespace: str = Field(
-        default="seraph",
-        description="Cache key namespace/prefix"
-    )
+    backend: CacheBackend = Field(default=CacheBackend.MEMORY, description="Cache backend to use")
+    ttl_seconds: int = Field(default=3600, ge=0, description="Default TTL in seconds (0 = no expiry)")
+    max_size: int = Field(default=1000, ge=1, description="Max cache entries (memory backend)")
+    namespace: str = Field(default="seraph", description="Cache key namespace/prefix")
 
     # Redis-specific settings (only used when backend=redis)
-    redis_url: Optional[str] = Field(
-        default=None,
-        description="Redis connection URL"
-    )
-    redis_max_connections: int = Field(
-        default=10,
-        ge=1,
-        description="Redis connection pool size"
-    )
-    redis_socket_timeout: int = Field(
-        default=5,
-        ge=1,
-        description="Redis socket timeout in seconds"
-    )
+    redis_url: str | None = Field(default=None, description="Redis connection URL")
+    redis_max_connections: int = Field(default=10, ge=1, description="Redis connection pool size")
+    redis_socket_timeout: int = Field(default=5, ge=1, description="Redis socket timeout in seconds")
 
     @field_validator("redis_url")
     @classmethod
-    def validate_redis_url(cls, v: Optional[str], info) -> Optional[str]:
+    def validate_redis_url(cls, v: str | None, info) -> str | None:
         """Ensure redis_url is provided when backend is redis."""
         backend = info.data.get("backend")
         if backend == CacheBackend.REDIS and not v:
@@ -100,142 +74,78 @@ class CacheConfig(BaseModel):
 class ObservabilityConfig(BaseModel):
     """Observability and monitoring configuration."""
 
-    backend: ObservabilityBackend = Field(
-        default=ObservabilityBackend.SIMPLE,
-        description="Observability backend"
-    )
-    enable_metrics: bool = Field(
-        default=True,
-        description="Enable metrics collection"
-    )
-    enable_tracing: bool = Field(
-        default=False,
-        description="Enable distributed tracing"
-    )
+    backend: ObservabilityBackend = Field(default=ObservabilityBackend.SIMPLE, description="Observability backend")
+    enable_metrics: bool = Field(default=True, description="Enable metrics collection")
+    enable_tracing: bool = Field(default=False, description="Enable distributed tracing")
     metrics_port: int = Field(
         default=9090,
         ge=1,
         le=65535,
-        description="Metrics endpoint port (for prometheus exporter)"
+        description="Metrics endpoint port (for prometheus exporter)",
     )
 
     # Prometheus-specific
-    prometheus_path: str = Field(
-        default="/metrics",
-        description="Prometheus metrics path"
-    )
+    prometheus_path: str = Field(default="/metrics", description="Prometheus metrics path")
 
     # Datadog-specific
-    datadog_api_key: Optional[str] = Field(
-        default=None,
-        description="Datadog API key"
-    )
-    datadog_site: str = Field(
-        default="datadoghq.com",
-        description="Datadog site"
-    )
+    datadog_api_key: str | None = Field(default=None, description="Datadog API key")
+    datadog_site: str = Field(default="datadoghq.com", description="Datadog site")
 
 
 class FeatureFlags(BaseModel):
     """Feature flags for enabling/disabling platform capabilities."""
 
-    token_optimization: bool = Field(
-        default=True,
-        description="Enable token optimization features"
-    )
-    model_routing: bool = Field(
-        default=False,
-        description="Enable intelligent model routing (future)"
-    )
-    semantic_cache: bool = Field(
-        default=False,
-        description="Enable semantic caching (future)"
-    )
-    context_optimization: bool = Field(
-        default=False,
-        description="Enable context optimization (future)"
-    )
-    budget_management: bool = Field(
-        default=False,
-        description="Enable budget management (future)"
-    )
-    quality_preservation: bool = Field(
-        default=False,
-        description="Enable quality preservation (future)"
-    )
+    token_optimization: bool = Field(default=True, description="Enable token optimization features")
+    model_routing: bool = Field(default=False, description="Enable intelligent model routing (future)")
+    semantic_cache: bool = Field(default=False, description="Enable semantic caching (future)")
+    context_optimization: bool = Field(default=False, description="Enable context optimization (future)")
+    budget_management: bool = Field(default=False, description="Enable budget management (future)")
+    quality_preservation: bool = Field(default=False, description="Enable quality preservation (future)")
 
 
 class TokenOptimizationConfig(BaseModel):
     """Token optimization feature configuration."""
 
-    enabled: bool = Field(
-        default=True,
-        description="Enable token optimization features"
-    )
+    enabled: bool = Field(default=True, description="Enable token optimization features")
     default_reduction_target: float = Field(
         default=0.20,
         ge=0.0,
         le=0.5,
-        description="Default token reduction target (0.0-0.5 = 0-50%)"
+        description="Default token reduction target (0.0-0.5 = 0-50%)",
     )
     quality_threshold: float = Field(
         default=0.90,
         ge=0.0,
         le=1.0,
-        description="Minimum quality threshold for optimizations (0.0-1.0)"
+        description="Minimum quality threshold for optimizations (0.0-1.0)",
     )
-    cache_optimizations: bool = Field(
-        default=True,
-        description="Cache optimization patterns for reuse"
-    )
+    cache_optimizations: bool = Field(default=True, description="Cache optimization patterns for reuse")
     optimization_strategies: list[str] = Field(
         default_factory=lambda: ["whitespace", "redundancy", "compression"],
-        description="Active optimization strategies"
+        description="Active optimization strategies",
     )
     max_overhead_ms: float = Field(
         default=100.0,
         ge=0.0,
-        description="Maximum acceptable processing overhead in milliseconds"
+        description="Maximum acceptable processing overhead in milliseconds",
     )
     enable_aggressive_mode: bool = Field(
-        default=False,
-        description="Enable aggressive optimization (may reduce quality)"
+        default=False, description="Enable aggressive optimization (may reduce quality)"
     )
-    preserve_code_blocks: bool = Field(
-        default=True,
-        description="Preserve code blocks and structured content"
-    )
-    preserve_formatting: bool = Field(
-        default=True,
-        description="Preserve important formatting (lists, tables, etc.)"
-    )
-    cache_ttl_seconds: int = Field(
-        default=3600,
-        ge=0,
-        description="TTL for cached optimizations in seconds"
-    )
+    preserve_code_blocks: bool = Field(default=True, description="Preserve code blocks and structured content")
+    preserve_formatting: bool = Field(default=True, description="Preserve important formatting (lists, tables, etc.)")
+    cache_ttl_seconds: int = Field(default=3600, ge=0, description="TTL for cached optimizations in seconds")
 
 
 class BudgetConfig(BaseModel):
     """Budget enforcement configuration (plugin-provided features)."""
 
-    enable_budget_enforcement: bool = Field(
-        default=False,
-        description="Enable budget limits (requires plugin)"
-    )
-    daily_budget_limit: Optional[float] = Field(
-        default=None,
-        ge=0.0,
-        description="Daily budget in USD"
-    )
-    monthly_budget_limit: Optional[float] = Field(
-        default=None,
-        ge=0.0,
-        description="Monthly budget in USD"
-    )
+    enable_budget_enforcement: bool = Field(default=False, description="Enable budget limits (requires plugin)")
+    daily_budget_limit: float | None = Field(default=None, ge=0.0, description="Daily budget in USD")
+    monthly_budget_limit: float | None = Field(default=None, ge=0.0, description="Monthly budget in USD")
     alert_thresholds: list[float] = Field(
         default_factory=lambda: [0.5, 0.75, 0.9],
-        description="Budget alert thresholds (0.0-1.0)"
+        description="Budget alert thresholds (0.0-1.0)",
     )
 
     @field_validator("alert_thresholds")
@@ -251,83 +161,48 @@ class BudgetConfig(BaseModel):
 class SecurityConfig(BaseModel):
     """Security configuration."""
 
-    enable_auth: bool = Field(
-        default=False,
-        description="Enable authentication (MCP client-side)"
-    )
-    api_keys: list[str] = Field(
-        default_factory=list,
-        description="Valid API keys (for plugin HTTP adapters)"
-    )
+    enable_auth: bool = Field(default=False, description="Enable authentication (MCP client-side)")
+    api_keys: list[str] = Field(default_factory=list, description="Valid API keys (for plugin HTTP adapters)")
     allowed_hosts: list[str] = Field(
         default_factory=lambda: ["*"],
-        description="Allowed host headers (for plugin HTTP adapters)"
+        description="Allowed host headers (for plugin HTTP adapters)",
     )
 
 
 class ProviderConfig(BaseModel):
     """Configuration for a single AI model provider."""
 
-    enabled: bool = Field(
-        default=True,
-        description="Whether this provider is enabled"
-    )
-    api_key: Optional[str] = Field(
+    enabled: bool = Field(default=True, description="Whether this provider is enabled")
+    api_key: str | None = Field(default=None, description="API key for the provider")
+    model: str | None = Field(
         default=None,
-        description="API key for the provider"
+        description="Model name to use (e.g., 'gpt-4', 'claude-3-opus', 'llama-3-8b'). Required for operation.",
     )
-    model: Optional[str] = Field(
-        default=None,
-        description="Model name to use (e.g., 'gpt-4', 'claude-3-opus', 'llama-3-8b'). Required for operation."
-    )
-    base_url: Optional[str] = Field(
-        default=None,
-        description="Custom base URL (optional, for openai-compatible)"
-    )
-    timeout: float = Field(
-        default=30.0,
-        ge=1.0,
-        description="Request timeout in seconds"
-    )
-    max_retries: int = Field(
-        default=3,
-        ge=0,
-        description="Maximum retry attempts"
-    )
+    base_url: str | None = Field(default=None, description="Custom base URL (optional, for openai-compatible)")
+    timeout: float = Field(default=30.0, ge=1.0, description="Request timeout in seconds")
+    max_retries: int = Field(default=3, ge=0, description="Maximum retry attempts")
 
 
 class ProvidersConfig(BaseModel):
     """Configuration for AI model providers."""
 
-    openai: ProviderConfig = Field(
-        default_factory=ProviderConfig,
-        description="OpenAI provider configuration"
-    )
-    anthropic: ProviderConfig = Field(
-        default_factory=ProviderConfig,
-        description="Anthropic provider configuration"
-    )
+    openai: ProviderConfig = Field(default_factory=ProviderConfig, description="OpenAI provider configuration")
+    anthropic: ProviderConfig = Field(default_factory=ProviderConfig, description="Anthropic provider configuration")
     gemini: ProviderConfig = Field(
         default_factory=ProviderConfig,
-        description="Google Gemini provider configuration"
+        description="Google Gemini provider configuration",
     )
     openai_compatible: ProviderConfig = Field(
         default_factory=ProviderConfig,
-        description="OpenAI-compatible provider configuration (for custom endpoints)"
+        description="OpenAI-compatible provider configuration (for custom endpoints)",
     )
 
 
 class SeraphConfig(BaseModel):
     """Root configuration for Seraph MCP."""
 
-    environment: Environment = Field(
-        default=Environment.DEVELOPMENT,
-        description="Runtime environment"
-    )
-    log_level: LogLevel = Field(
-        default=LogLevel.INFO,
-        description="Logging level"
-    )
+    environment: Environment = Field(default=Environment.DEVELOPMENT, description="Runtime environment")
+    log_level: LogLevel = Field(default=LogLevel.INFO, description="Logging level")
 
     cache: CacheConfig = Field(default_factory=CacheConfig)
     observability: ObservabilityConfig = Field(default_factory=ObservabilityConfig)
@@ -342,6 +217,7 @@ class SeraphConfig(BaseModel):
     def context_optimization(self):
         """Load context optimization config on demand."""
         from ..context_optimization.config import load_config as load_context_config
+
         return load_context_config()
 
     @field_validator("security")

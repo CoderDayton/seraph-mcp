@@ -12,12 +12,13 @@ Per SDD.md specifications:
 """
 
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from pydantic import BaseModel, Field
 
 from src.cache import create_cache
 from src.observability import get_observability
+
 from .config import TokenOptimizationConfig
 from .cost_estimator import get_cost_estimator
 from .counter import get_token_counter
@@ -35,16 +36,14 @@ class OptimizeTokensInput(BaseModel):
     """Input for optimize_tokens tool."""
 
     content: str = Field(..., description="Content to optimize")
-    target_reduction: Optional[float] = Field(
+    target_reduction: float | None = Field(
         None,
         ge=0.0,
         le=0.5,
         description="Target reduction ratio (0.0-0.5, default: config value)",
     )
     model: str = Field("gpt-4", description="Model to optimize for")
-    strategies: Optional[List[str]] = Field(
-        None, description="Optimization strategies to apply (default: config value)"
-    )
+    strategies: list[str] | None = Field(None, description="Optimization strategies to apply (default: config value)")
 
 
 class CountTokensInput(BaseModel):
@@ -52,9 +51,7 @@ class CountTokensInput(BaseModel):
 
     content: str = Field(..., description="Content to count tokens for")
     model: str = Field("gpt-4", description="Model name")
-    include_breakdown: bool = Field(
-        False, description="Include detailed token breakdown"
-    )
+    include_breakdown: bool = Field(False, description="Include detailed token breakdown")
 
 
 class EstimateCostInput(BaseModel):
@@ -63,9 +60,7 @@ class EstimateCostInput(BaseModel):
     content: str = Field(..., description="Input content")
     model: str = Field(..., description="Model name")
     operation: str = Field("completion", description="Operation type")
-    output_tokens: Optional[int] = Field(
-        None, description="Expected output tokens (None = estimate)"
-    )
+    output_tokens: int | None = Field(None, description="Expected output tokens (None = estimate)")
 
 
 class AnalyzeEfficiencyInput(BaseModel):
@@ -91,7 +86,7 @@ class TokenOptimizationTools:
     - analyze_token_efficiency: Identify optimization opportunities
     """
 
-    def __init__(self, config: Optional[TokenOptimizationConfig] = None) -> None:
+    def __init__(self, config: TokenOptimizationConfig | None = None) -> None:
         """
         Initialize token optimization tools.
 
@@ -123,10 +118,10 @@ class TokenOptimizationTools:
     def optimize_tokens(
         self,
         content: str,
-        target_reduction: Optional[float] = None,
+        target_reduction: float | None = None,
         model: str = "gpt-4",
-        strategies: Optional[List[str]] = None,
-    ) -> Dict[str, Any]:
+        strategies: list[str] | None = None,
+    ) -> dict[str, Any]:
         """
         Optimize content to reduce token count.
 
@@ -175,10 +170,9 @@ class TokenOptimizationTools:
                 # Cache operations are async, but we'll handle sync for now
                 # In production, this should be properly awaited
                 import asyncio
+
                 try:
-                    cached_result = asyncio.get_event_loop().run_until_complete(
-                        self.cache.get(cache_key)
-                    )
+                    cached_result = asyncio.get_event_loop().run_until_complete(self.cache.get(cache_key))
                 except RuntimeError:
                     # No event loop running
                     pass
@@ -232,11 +226,10 @@ class TokenOptimizationTools:
             if self.config.cache_optimizations and cache_key:
                 try:
                     import asyncio
+
                     try:
                         asyncio.get_event_loop().run_until_complete(
-                            self.cache.set(
-                                cache_key, response, ttl=self.config.cache_ttl_seconds
-                            )
+                            self.cache.set(cache_key, response, ttl=self.config.cache_ttl_seconds)
                         )
                     except RuntimeError:
                         pass
@@ -245,14 +238,8 @@ class TokenOptimizationTools:
 
             # Record metrics
             self.obs.increment("optimization.success")
-            self.obs.histogram(
-                "optimization.tokens_saved",
-                result.tokens_saved
-            )
-            self.obs.histogram(
-                "optimization.processing_time_ms",
-                result.processing_time_ms
-            )
+            self.obs.histogram("optimization.tokens_saved", result.tokens_saved)
+            self.obs.histogram("optimization.processing_time_ms", result.processing_time_ms)
 
             return response
 
@@ -269,7 +256,7 @@ class TokenOptimizationTools:
         content: str,
         model: str = "gpt-4",
         include_breakdown: bool = False,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Count tokens in content for specified model.
 
@@ -314,8 +301,8 @@ class TokenOptimizationTools:
         content: str,
         model: str,
         operation: str = "completion",
-        output_tokens: Optional[int] = None,
-    ) -> Dict[str, Any]:
+        output_tokens: int | None = None,
+    ) -> dict[str, Any]:
         """
         Estimate cost for LLM API call.
 
@@ -357,7 +344,7 @@ class TokenOptimizationTools:
         self,
         content: str,
         model: str = "gpt-4",
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Analyze content for optimization opportunities.
 
@@ -379,18 +366,12 @@ class TokenOptimizationTools:
                 analysis = self.optimizer.analyze_efficiency(content, model)
 
                 # Add cost implications
-                current_cost = self.estimator.estimate_cost(
-                    content, model, operation="completion"
-                )
+                current_cost = self.estimator.estimate_cost(content, model, operation="completion")
 
                 if "error" not in current_cost:
                     # Estimate cost after optimization
-                    potential_tokens = (
-                        analysis["current_tokens"] - analysis["total_potential_savings"]
-                    )
-                    potential_savings_pct = (
-                        analysis["potential_reduction_percentage"] / 100
-                    )
+                    (analysis["current_tokens"] - analysis["total_potential_savings"])
+                    potential_savings_pct = analysis["potential_reduction_percentage"] / 100
 
                     analysis["cost_analysis"] = {
                         "current_cost_usd": current_cost["total_cost_usd"],
@@ -420,12 +401,10 @@ class TokenOptimizationTools:
 # Singleton Instance
 # ============================================================================
 
-_tools_instance: Optional[TokenOptimizationTools] = None
+_tools_instance: TokenOptimizationTools | None = None
 
 
-def get_tools(
-    config: Optional[TokenOptimizationConfig] = None
-) -> TokenOptimizationTools:
+def get_tools(config: TokenOptimizationConfig | None = None) -> TokenOptimizationTools:
     """
     Get singleton TokenOptimizationTools instance.
 

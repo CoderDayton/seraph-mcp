@@ -8,7 +8,6 @@ Provides a singleton configuration instance for the runtime.
 import logging
 import os
 from pathlib import Path
-from typing import Optional
 
 from dotenv import load_dotenv
 
@@ -16,11 +15,11 @@ from .schemas import SeraphConfig
 
 logger = logging.getLogger(__name__)
 
-_config_instance: Optional[SeraphConfig] = None
+_config_instance: SeraphConfig | None = None
 
 
 def load_config(
-    env_file: Optional[str] = None,
+    env_file: str | None = None,
     reload: bool = False,
 ) -> SeraphConfig:
     """
@@ -61,8 +60,6 @@ def load_config(
     config_dict = {
         "environment": os.getenv("ENVIRONMENT", "development"),
         "log_level": os.getenv("LOG_LEVEL", "INFO"),
-
-
         "cache": {
             "backend": os.getenv("CACHE_BACKEND", cache_backend),  # Auto-detected
             "ttl_seconds": int(os.getenv("CACHE_TTL_SECONDS", "3600")),
@@ -81,8 +78,6 @@ def load_config(
             "datadog_api_key": os.getenv("DATADOG_API_KEY"),
             "datadog_site": os.getenv("DATADOG_SITE", "datadoghq.com"),
         },
-
-
         "optimization": {
             "enable_optimization": os.getenv("ENABLE_OPTIMIZATION", "true").lower() == "true",
             "optimization_mode": os.getenv("OPTIMIZATION_MODE", "balanced"),
@@ -92,8 +87,12 @@ def load_config(
         "budget": {
             "enable_budget_enforcement": os.getenv("ENABLE_BUDGET_ENFORCEMENT", "false").lower() == "true",
             "daily_budget_limit": float(os.getenv("DAILY_BUDGET_LIMIT")) if os.getenv("DAILY_BUDGET_LIMIT") else None,
-            "monthly_budget_limit": float(os.getenv("MONTHLY_BUDGET_LIMIT")) if os.getenv("MONTHLY_BUDGET_LIMIT") else None,
-            "alert_thresholds": [float(x.strip()) for x in os.getenv("BUDGET_ALERT_THRESHOLDS", "0.5,0.75,0.9").split(",")],
+            "monthly_budget_limit": float(os.getenv("MONTHLY_BUDGET_LIMIT"))
+            if os.getenv("MONTHLY_BUDGET_LIMIT")
+            else None,
+            "alert_thresholds": [
+                float(x.strip()) for x in os.getenv("BUDGET_ALERT_THRESHOLDS", "0.5,0.75,0.9").split(",")
+            ],
         },
         "security": {
             "enable_auth": os.getenv("ENABLE_AUTH", "false").lower() == "true",
@@ -171,7 +170,7 @@ def get_config() -> SeraphConfig:
     return _config_instance
 
 
-def reload_config(env_file: Optional[str] = None) -> SeraphConfig:
+def reload_config(env_file: str | None = None) -> SeraphConfig:
     """
     Force reload configuration.
 

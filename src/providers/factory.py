@@ -12,10 +12,9 @@ Per SDD.md:
 """
 
 import logging
-from typing import Dict, Optional, Type
 
-from .base import BaseProvider, ProviderConfig
 from .anthropic_provider import AnthropicProvider
+from .base import BaseProvider, ProviderConfig
 from .gemini_provider import GeminiProvider
 from .openai_compatible import OpenAICompatibleProvider
 from .openai_provider import OpenAIProvider
@@ -32,7 +31,7 @@ class ProviderFactory:
     """
 
     # Registry of available providers
-    _PROVIDERS: Dict[str, Type[BaseProvider]] = {
+    _PROVIDERS: dict[str, type[BaseProvider]] = {
         "openai": OpenAIProvider,
         "anthropic": AnthropicProvider,
         "gemini": GeminiProvider,
@@ -41,7 +40,7 @@ class ProviderFactory:
 
     def __init__(self) -> None:
         """Initialize provider factory."""
-        self._instances: Dict[str, BaseProvider] = {}
+        self._instances: dict[str, BaseProvider] = {}
 
     def create_provider(
         self,
@@ -68,10 +67,7 @@ class ProviderFactory:
         # Check if provider is supported
         if provider_name not in self._PROVIDERS:
             supported = ", ".join(self._PROVIDERS.keys())
-            raise ValueError(
-                f"Unsupported provider: {provider_name}. "
-                f"Supported providers: {supported}"
-            )
+            raise ValueError(f"Unsupported provider: {provider_name}. Supported providers: {supported}")
 
         # Return cached instance if exists and is enabled
         cache_key = f"{provider_name}:{config.api_key[:8] if config.api_key else 'none'}"
@@ -87,17 +83,15 @@ class ProviderFactory:
             instance = provider_class(config)
             self._instances[cache_key] = instance
 
-            logger.info(
-                f"Created {provider_name} provider instance (enabled={config.enabled})"
-            )
+            logger.info(f"Created {provider_name} provider instance (enabled={config.enabled})")
 
             return instance
 
         except Exception as e:
             logger.error(f"Failed to create {provider_name} provider: {e}")
-            raise RuntimeError(f"Failed to create {provider_name} provider: {e}")
+            raise RuntimeError(f"Failed to create {provider_name} provider: {e}") from e
 
-    def get_provider(self, provider_name: str) -> Optional[BaseProvider]:
+    def get_provider(self, provider_name: str) -> BaseProvider | None:
         """
         Get an existing provider instance by name.
 
@@ -115,18 +109,14 @@ class ProviderFactory:
 
         return None
 
-    def list_providers(self) -> Dict[str, BaseProvider]:
+    def list_providers(self) -> dict[str, BaseProvider]:
         """
         List all active provider instances.
 
         Returns:
             Dictionary of provider name -> instance
         """
-        return {
-            instance.name: instance
-            for instance in self._instances.values()
-            if instance.config.enabled
-        }
+        return {instance.name: instance for instance in self._instances.values() if instance.config.enabled}
 
     async def close_all(self) -> None:
         """Close all provider instances and clean up resources."""
@@ -156,7 +146,7 @@ class ProviderFactory:
 
 
 # Global factory instance
-_factory: Optional[ProviderFactory] = None
+_factory: ProviderFactory | None = None
 
 
 def get_factory() -> ProviderFactory:
@@ -189,7 +179,7 @@ def create_provider(provider_name: str, config: ProviderConfig) -> BaseProvider:
     return factory.create_provider(provider_name, config)
 
 
-def get_provider(provider_name: str) -> Optional[BaseProvider]:
+def get_provider(provider_name: str) -> BaseProvider | None:
     """
     Convenience function to get a provider using the global factory.
 
@@ -203,7 +193,7 @@ def get_provider(provider_name: str) -> Optional[BaseProvider]:
     return factory.get_provider(provider_name)
 
 
-def list_providers() -> Dict[str, BaseProvider]:
+def list_providers() -> dict[str, BaseProvider]:
     """
     Convenience function to list all providers.
 

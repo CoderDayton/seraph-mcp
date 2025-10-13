@@ -14,11 +14,12 @@ Per SDD.md:
 
 import asyncio
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 try:
     import openai
     from openai import AsyncOpenAI
+
     OPENAI_AVAILABLE = True
 except ImportError:
     OPENAI_AVAILABLE = False
@@ -27,7 +28,6 @@ from .base import (
     BaseProvider,
     CompletionRequest,
     CompletionResponse,
-    ModelInfo,
     ProviderConfig,
 )
 
@@ -40,12 +40,10 @@ class OpenAIProvider(BaseProvider):
         super().__init__(config)
 
         if not OPENAI_AVAILABLE:
-            raise RuntimeError(
-                "OpenAI SDK not available. Install with: pip install openai>=1.0.0"
-            )
+            raise RuntimeError("OpenAI SDK not available. Install with: pip install openai>=1.0.0")
 
         # Initialize async client
-        client_kwargs: Dict[str, Any] = {
+        client_kwargs: dict[str, Any] = {
             "api_key": config.api_key,
             "timeout": config.timeout,
             "max_retries": config.max_retries,
@@ -70,7 +68,7 @@ class OpenAIProvider(BaseProvider):
         return "openai"
 
     @property
-    def models_dev_provider_id(self) -> Optional[str]:
+    def models_dev_provider_id(self) -> str | None:
         """Return Models.dev provider ID."""
         return "openai"
 
@@ -83,7 +81,7 @@ class OpenAIProvider(BaseProvider):
 
         try:
             # Prepare API request
-            api_params: Dict[str, Any] = {
+            api_params: dict[str, Any] = {
                 "model": request.model,
                 "messages": request.messages,
                 "temperature": request.temperature,
@@ -130,22 +128,19 @@ class OpenAIProvider(BaseProvider):
             )
 
         except openai.AuthenticationError as e:
-            raise RuntimeError(f"OpenAI authentication failed: {e}")
+            raise RuntimeError(f"OpenAI authentication failed: {e}") from e
         except openai.RateLimitError as e:
-            raise RuntimeError(f"OpenAI rate limit exceeded: {e}")
+            raise RuntimeError(f"OpenAI rate limit exceeded: {e}") from e
         except openai.APIError as e:
-            raise RuntimeError(f"OpenAI API error: {e}")
+            raise RuntimeError(f"OpenAI API error: {e}") from e
         except Exception as e:
-            raise RuntimeError(f"Unexpected error calling OpenAI: {e}")
+            raise RuntimeError(f"Unexpected error calling OpenAI: {e}") from e
 
     async def health_check(self) -> bool:
         """Check if OpenAI API is accessible."""
         try:
             # Try to list models as a simple health check
-            await asyncio.wait_for(
-                self.client.models.list(),
-                timeout=5.0
-            )
+            await asyncio.wait_for(self.client.models.list(), timeout=5.0)
             return True
         except Exception:
             return False

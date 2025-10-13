@@ -22,16 +22,13 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 from providers import (
     CompletionRequest,
     ProviderConfig,
+    close_all_providers,
     create_provider,
     list_providers,
-    close_all_providers,
 )
 
 # Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
 
@@ -55,9 +52,7 @@ async def example_basic_completion():
         # Create completion request
         request = CompletionRequest(
             model="gpt-3.5-turbo",
-            messages=[
-                {"role": "user", "content": "Say hello in 5 words or less."}
-            ],
+            messages=[{"role": "user", "content": "Say hello in 5 words or less."}],
             temperature=0.7,
             max_tokens=20,
         )
@@ -85,30 +80,21 @@ async def example_multiple_providers():
 
     # OpenAI
     try:
-        providers["openai"] = create_provider(
-            "openai",
-            ProviderConfig(api_key="sk-your-openai-key")
-        )
+        providers["openai"] = create_provider("openai", ProviderConfig(api_key="sk-your-openai-key"))
         logger.info("✓ OpenAI provider created")
     except Exception as e:
         logger.warning(f"✗ OpenAI provider failed: {e}")
 
     # Anthropic
     try:
-        providers["anthropic"] = create_provider(
-            "anthropic",
-            ProviderConfig(api_key="sk-ant-your-anthropic-key")
-        )
+        providers["anthropic"] = create_provider("anthropic", ProviderConfig(api_key="sk-ant-your-anthropic-key"))
         logger.info("✓ Anthropic provider created")
     except Exception as e:
         logger.warning(f"✗ Anthropic provider failed: {e}")
 
     # Gemini
     try:
-        providers["gemini"] = create_provider(
-            "gemini",
-            ProviderConfig(api_key="AIza-your-gemini-key")
-        )
+        providers["gemini"] = create_provider("gemini", ProviderConfig(api_key="AIza-your-gemini-key"))
         logger.info("✓ Gemini provider created")
     except Exception as e:
         logger.warning(f"✗ Gemini provider failed: {e}")
@@ -235,9 +221,7 @@ async def example_openai_compatible():
         if models:
             request = CompletionRequest(
                 model=models[0].model_id,
-                messages=[
-                    {"role": "user", "content": "Hello! Introduce yourself."}
-                ],
+                messages=[{"role": "user", "content": "Hello! Introduce yourself."}],
                 temperature=0.7,
                 max_tokens=100,
             )

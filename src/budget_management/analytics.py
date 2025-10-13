@@ -14,8 +14,7 @@ Per SDD.md:
 import logging
 import statistics
 import time
-from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Tuple
+from datetime import datetime
 
 from .tracker import BudgetTracker
 
@@ -43,7 +42,7 @@ class BudgetAnalytics:
         self,
         days_ahead: int = 7,
         historical_days: int = 30,
-    ) -> Dict[str, any]:
+    ) -> dict[str, any]:
         """
         Forecast future spending using simple linear projection.
 
@@ -111,9 +110,7 @@ class BudgetAnalytics:
                 "max": max_projected,
             },
             "trend": trend,
-            "recommendation": self._generate_recommendation(
-                avg_daily, projected_total, trend
-            ),
+            "recommendation": self._generate_recommendation(avg_daily, projected_total, trend),
         }
 
     def _generate_recommendation(
@@ -124,9 +121,9 @@ class BudgetAnalytics:
     ) -> str:
         """Generate spending recommendation."""
         if trend == "increasing":
-            return f"Spending is trending up. Consider reviewing usage to reduce costs."
+            return "Spending is trending up. Consider reviewing usage to reduce costs."
         elif trend == "decreasing":
-            return f"Spending is trending down. Current optimizations are effective."
+            return "Spending is trending down. Current optimizations are effective."
         elif avg_daily > 10.0:
             return f"High daily spending (${avg_daily:.2f}/day). Review for optimization opportunities."
         else:
@@ -135,7 +132,7 @@ class BudgetAnalytics:
     def analyze_spending_patterns(
         self,
         days: int = 30,
-    ) -> Dict[str, any]:
+    ) -> dict[str, any]:
         """
         Analyze spending patterns over time.
 
@@ -181,7 +178,7 @@ class BudgetAnalytics:
         self,
         baseline_cost: float,
         optimized_cost: float,
-    ) -> Dict[str, any]:
+    ) -> dict[str, any]:
         """
         Calculate cost savings from optimizations.
 
@@ -206,7 +203,7 @@ class BudgetAnalytics:
     def get_cost_breakdown(
         self,
         period: str = "month",
-    ) -> Dict[str, any]:
+    ) -> dict[str, any]:
         """
         Get detailed cost breakdown.
 
@@ -223,11 +220,7 @@ class BudgetAnalytics:
         by_provider = spending.get("by_provider", [])
 
         for provider in by_provider:
-            provider["percentage"] = (
-                (provider["total_cost"] / total_cost * 100)
-                if total_cost > 0
-                else 0.0
-            )
+            provider["percentage"] = (provider["total_cost"] / total_cost * 100) if total_cost > 0 else 0.0
 
         # Token efficiency
         total_input = spending.get("total_input_tokens", 0)
@@ -242,9 +235,7 @@ class BudgetAnalytics:
             "total_requests": spending.get("total_requests", 0),
             "total_tokens": total_tokens,
             "cost_per_request": (
-                total_cost / spending.get("total_requests", 1)
-                if spending.get("total_requests", 0) > 0
-                else 0.0
+                total_cost / spending.get("total_requests", 1) if spending.get("total_requests", 0) > 0 else 0.0
             ),
             "cost_per_1k_tokens": cost_per_1k_tokens,
             "by_provider": by_provider,
@@ -255,7 +246,7 @@ class BudgetAnalytics:
         self,
         period1: str = "week",
         period2: str = "month",
-    ) -> Dict[str, any]:
+    ) -> dict[str, any]:
         """
         Compare spending across different time periods.
 
@@ -295,9 +286,7 @@ class BudgetAnalytics:
             "comparison": {
                 "cost_difference": cost2 - cost1,
                 "daily_avg_difference": daily_avg2 - daily_avg1,
-                "percentage_change": (
-                    ((cost2 - cost1) / cost1 * 100) if cost1 > 0 else 0.0
-                ),
+                "percentage_change": (((cost2 - cost1) / cost1 * 100) if cost1 > 0 else 0.0),
             },
         }
 
@@ -305,7 +294,7 @@ class BudgetAnalytics:
         self,
         report_type: str = "summary",
         days: int = 30,
-    ) -> Dict[str, any]:
+    ) -> dict[str, any]:
         """
         Generate comprehensive spending report.
 
@@ -347,11 +336,11 @@ class BudgetAnalytics:
 
 
 # Global singleton
-_analytics: Optional[BudgetAnalytics] = None
+_analytics: BudgetAnalytics | None = None
 
 
 def get_budget_analytics(
-    tracker: Optional[BudgetTracker] = None,
+    tracker: BudgetTracker | None = None,
 ) -> BudgetAnalytics:
     """
     Get global budget analytics instance.
@@ -367,6 +356,7 @@ def get_budget_analytics(
     if _analytics is None:
         if tracker is None:
             from .tracker import get_budget_tracker
+
             tracker = get_budget_tracker()
         _analytics = BudgetAnalytics(tracker)
 

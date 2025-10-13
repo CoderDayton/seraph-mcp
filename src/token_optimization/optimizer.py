@@ -9,7 +9,7 @@ import logging
 import re
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from .counter import get_token_counter
 
@@ -18,6 +18,7 @@ logger = logging.getLogger(__name__)
 
 class OptimizationStrategy(str, Enum):
     """Available optimization strategies."""
+
     WHITESPACE = "whitespace"
     REDUNDANCY = "redundancy"
     COMPRESSION = "compression"
@@ -34,10 +35,10 @@ class OptimizationResult:
     original_tokens: int
     optimized_tokens: int
     reduction_ratio: float
-    strategies_applied: List[str]
+    strategies_applied: list[str]
     quality_score: float
     processing_time_ms: float
-    metadata: Dict[str, Any]
+    metadata: dict[str, Any]
 
     @property
     def tokens_saved(self) -> int:
@@ -51,7 +52,7 @@ class OptimizationResult:
             return 0.0
         return (self.tokens_saved / self.original_tokens) * 100
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary."""
         return {
             "original_tokens": self.original_tokens,
@@ -98,7 +99,7 @@ class TokenOptimizer:
         content: str,
         target_reduction: float = 0.20,
         model: str = "gpt-4",
-        strategies: Optional[List[str]] = None,
+        strategies: list[str] | None = None,
         aggressive: bool = False,
     ) -> OptimizationResult:
         """
@@ -115,6 +116,7 @@ class TokenOptimizer:
             OptimizationResult with optimized content and metrics
         """
         import time
+
         start_time = time.perf_counter()
 
         # Count original tokens
@@ -127,14 +129,16 @@ class TokenOptimizer:
                 OptimizationStrategy.REDUNDANCY,
             ]
             if aggressive:
-                strategies.extend([
-                    OptimizationStrategy.COMPRESSION,
-                    OptimizationStrategy.DEDUPLICATION,
-                ])
+                strategies.extend(
+                    [
+                        OptimizationStrategy.COMPRESSION,
+                        OptimizationStrategy.DEDUPLICATION,
+                    ]
+                )
 
         # Apply optimization strategies
         optimized = content
-        applied_strategies: List[str] = []
+        applied_strategies: list[str] = []
 
         for strategy in strategies:
             try:
@@ -159,11 +163,7 @@ class TokenOptimizer:
         optimized_tokens = self.counter.count_tokens(optimized, model)
 
         # Calculate metrics
-        reduction_ratio = (
-            (original_tokens - optimized_tokens) / original_tokens
-            if original_tokens > 0
-            else 0.0
-        )
+        reduction_ratio = (original_tokens - optimized_tokens) / original_tokens if original_tokens > 0 else 0.0
 
         # Estimate quality score
         quality_score = self._estimate_quality(content, optimized)
@@ -203,21 +203,17 @@ class TokenOptimizer:
 
             # Replace with placeholders
             for i, _ in enumerate(code_blocks):
-                content = content.replace(
-                    code_blocks[i],
-                    f"__CODE_BLOCK_{i}__",
-                    1
-                )
+                content = content.replace(code_blocks[i], f"__CODE_BLOCK_{i}__", 1)
 
         # Remove excessive whitespace
-        content = re.sub(r'\n{3,}', '\n\n', content)  # Max 2 newlines
-        content = re.sub(r' {2,}', ' ', content)       # Max 1 space
-        content = re.sub(r'\t+', ' ', content)         # Tabs to single space
+        content = re.sub(r"\n{3,}", "\n\n", content)  # Max 2 newlines
+        content = re.sub(r" {2,}", " ", content)  # Max 1 space
+        content = re.sub(r"\t+", " ", content)  # Tabs to single space
 
         # Remove trailing whitespace
-        lines = content.split('\n')
+        lines = content.split("\n")
         lines = [line.rstrip() for line in lines]
-        content = '\n'.join(lines)
+        content = "\n".join(lines)
 
         if self.preserve_code_blocks:
             # Restore code blocks
@@ -238,22 +234,22 @@ class TokenOptimizer:
         """
         # Common redundant phrases
         redundant_phrases = [
-            (r'\bplease note that\b', ''),
-            (r'\bit is important to note that\b', ''),
-            (r'\bbasically\b', ''),
-            (r'\bactually\b', ''),
-            (r'\bin order to\b', 'to'),
-            (r'\bdue to the fact that\b', 'because'),
-            (r'\bat this point in time\b', 'now'),
-            (r'\bfor the purpose of\b', 'for'),
-            (r'\bin the event that\b', 'if'),
+            (r"\bplease note that\b", ""),
+            (r"\bit is important to note that\b", ""),
+            (r"\bbasically\b", ""),
+            (r"\bactually\b", ""),
+            (r"\bin order to\b", "to"),
+            (r"\bdue to the fact that\b", "because"),
+            (r"\bat this point in time\b", "now"),
+            (r"\bfor the purpose of\b", "for"),
+            (r"\bin the event that\b", "if"),
         ]
 
         for pattern, replacement in redundant_phrases:
             content = re.sub(pattern, replacement, content, flags=re.IGNORECASE)
 
         # Remove repeated words
-        content = re.sub(r'\b(\w+)\s+\1\b', r'\1', content)
+        content = re.sub(r"\b(\w+)\s+\1\b", r"\1", content)
 
         return content
 
@@ -269,13 +265,13 @@ class TokenOptimizer:
         """
         # Replace common verbose constructions
         replacements = [
-            (r'\bwill be able to\b', 'can'),
-            (r'\bis going to\b', 'will'),
-            (r'\bhas the ability to\b', 'can'),
-            (r'\bin spite of the fact that\b', 'although'),
-            (r'\buntil such time as\b', 'until'),
-            (r'\bwith regard to\b', 'regarding'),
-            (r'\bwith reference to\b', 'regarding'),
+            (r"\bwill be able to\b", "can"),
+            (r"\bis going to\b", "will"),
+            (r"\bhas the ability to\b", "can"),
+            (r"\bin spite of the fact that\b", "although"),
+            (r"\buntil such time as\b", "until"),
+            (r"\bwith regard to\b", "regarding"),
+            (r"\bwith reference to\b", "regarding"),
         ]
 
         for pattern, replacement in replacements:
@@ -294,7 +290,7 @@ class TokenOptimizer:
             Deduplicated content
         """
         # Split into paragraphs
-        paragraphs = content.split('\n\n')
+        paragraphs = content.split("\n\n")
 
         # Track seen paragraphs
         seen = set()
@@ -308,9 +304,9 @@ class TokenOptimizer:
                 seen.add(normalized)
                 unique_paragraphs.append(para)
 
-        return '\n\n'.join(unique_paragraphs)
+        return "\n\n".join(unique_paragraphs)
 
-    def _extract_code_blocks(self, content: str) -> List[str]:
+    def _extract_code_blocks(self, content: str) -> list[str]:
         """
         Extract code blocks from content.
 
@@ -321,7 +317,7 @@ class TokenOptimizer:
             List of code blocks
         """
         # Match markdown code blocks
-        pattern = r'```[\s\S]*?```'
+        pattern = r"```[\s\S]*?```"
         matches = re.findall(pattern, content)
         return matches
 
@@ -349,28 +345,20 @@ class TokenOptimizer:
         length_score = min(1.0, length_ratio * 1.2)  # Penalize >17% reduction
 
         # Structure preservation
-        original_lines = len(original.split('\n'))
-        optimized_lines = len(optimized.split('\n'))
+        original_lines = len(original.split("\n"))
+        optimized_lines = len(optimized.split("\n"))
         structure_score = min(1.0, optimized_lines / original_lines) if original_lines > 0 else 1.0
 
         # Simple similarity (character overlap)
-        common_chars = sum(1 for a, b in zip(original, optimized) if a == b)
+        common_chars = sum(1 for a, b in zip(original, optimized, strict=False) if a == b)
         similarity_score = common_chars / len(original) if len(original) > 0 else 1.0
 
         # Weighted average
-        quality = (
-            length_score * 0.3 +
-            structure_score * 0.3 +
-            similarity_score * 0.4
-        )
+        quality = length_score * 0.3 + structure_score * 0.3 + similarity_score * 0.4
 
         return min(1.0, max(0.0, quality))
 
-    def analyze_efficiency(
-        self,
-        content: str,
-        model: str = "gpt-4"
-    ) -> Dict[str, Any]:
+    def analyze_efficiency(self, content: str, model: str = "gpt-4") -> dict[str, Any]:
         """
         Analyze content for optimization opportunities.
 
@@ -384,12 +372,10 @@ class TokenOptimizer:
         token_count = self.counter.count_tokens(content, model)
 
         # Count various elements
-        whitespace_tokens = self.counter.count_tokens(
-            re.sub(r'\S', '', content), model
-        )
+        whitespace_tokens = self.counter.count_tokens(re.sub(r"\S", "", content), model)
 
         # Estimate redundancy
-        lines = content.split('\n')
+        lines = content.split("\n")
         unique_lines = len(set(line.strip() for line in lines if line.strip()))
         redundancy_ratio = 1.0 - (unique_lines / len(lines)) if lines else 0.0
 
@@ -406,17 +392,11 @@ class TokenOptimizer:
             "current_tokens": token_count,
             "potential_savings": potential_savings,
             "total_potential_savings": total_potential,
-            "potential_reduction_percentage": (
-                (total_potential / token_count * 100) if token_count > 0 else 0.0
-            ),
+            "potential_reduction_percentage": ((total_potential / token_count * 100) if token_count > 0 else 0.0),
             "suggestions": self._generate_suggestions(content, potential_savings),
         }
 
-    def _generate_suggestions(
-        self,
-        content: str,
-        potential_savings: Dict[str, int]
-    ) -> List[str]:
+    def _generate_suggestions(self, content: str, potential_savings: dict[str, int]) -> list[str]:
         """
         Generate optimization suggestions.
 
@@ -430,19 +410,13 @@ class TokenOptimizer:
         suggestions = []
 
         if potential_savings["whitespace"] > 10:
-            suggestions.append(
-                f"Remove excessive whitespace (save ~{potential_savings['whitespace']} tokens)"
-            )
+            suggestions.append(f"Remove excessive whitespace (save ~{potential_savings['whitespace']} tokens)")
 
         if potential_savings["redundancy"] > 20:
-            suggestions.append(
-                f"Remove redundant content (save ~{potential_savings['redundancy']} tokens)"
-            )
+            suggestions.append(f"Remove redundant content (save ~{potential_savings['redundancy']} tokens)")
 
         if potential_savings["compression"] > 15:
-            suggestions.append(
-                f"Apply compression techniques (save ~{potential_savings['compression']} tokens)"
-            )
+            suggestions.append(f"Apply compression techniques (save ~{potential_savings['compression']} tokens)")
 
         if not suggestions:
             suggestions.append("Content is already well-optimized")
@@ -451,7 +425,7 @@ class TokenOptimizer:
 
 
 # Singleton instance
-_optimizer_instance: Optional[TokenOptimizer] = None
+_optimizer_instance: TokenOptimizer | None = None
 
 
 def get_optimizer(

@@ -8,7 +8,7 @@ Thread-safe and suitable for single-process deployments.
 import asyncio
 import time
 from collections import OrderedDict
-from typing import Any, Optional
+from typing import Any
 
 from ..interface import CacheInterface
 
@@ -43,7 +43,7 @@ class MemoryCacheBackend(CacheInterface):
         self.namespace = namespace
 
         # Cache storage: key -> (value, expiry_time)
-        self._cache: OrderedDict[str, tuple[Any, Optional[float]]] = OrderedDict()
+        self._cache: OrderedDict[str, tuple[Any, float | None]] = OrderedDict()
 
         # Stats
         self._hits = 0
@@ -59,13 +59,13 @@ class MemoryCacheBackend(CacheInterface):
         """Create namespaced cache key."""
         return f"{self.namespace}:{key}"
 
-    def _is_expired(self, expiry: Optional[float]) -> bool:
+    def _is_expired(self, expiry: float | None) -> bool:
         """Check if entry is expired."""
         if expiry is None:
             return False
         return time.time() > expiry
 
-    async def get(self, key: str) -> Optional[Any]:
+    async def get(self, key: str) -> Any | None:
         """Retrieve value from cache."""
         async with self._lock:
             cache_key = self._make_key(key)
@@ -93,7 +93,7 @@ class MemoryCacheBackend(CacheInterface):
         self,
         key: str,
         value: Any,
-        ttl: Optional[int] = None,
+        ttl: int | None = None,
     ) -> bool:
         """Store value in cache."""
         async with self._lock:
@@ -206,7 +206,7 @@ class MemoryCacheBackend(CacheInterface):
     async def set_many(
         self,
         items: dict[str, Any],
-        ttl: Optional[int] = None,
+        ttl: int | None = None,
     ) -> int:
         """Store multiple values efficiently."""
         async with self._lock:

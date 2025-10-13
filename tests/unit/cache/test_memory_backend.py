@@ -13,7 +13,6 @@ Comprehensive unit tests for the in-memory cache backend, covering:
 
 import asyncio
 import time
-from typing import Any
 
 import pytest
 
@@ -536,16 +535,10 @@ class TestMemoryCacheBackendEdgeCases:
             return await backend.get(key)
 
         # Set 100 keys concurrently
-        await asyncio.gather(*[
-            set_value(f"key{i}", f"value{i}")
-            for i in range(100)
-        ])
+        await asyncio.gather(*[set_value(f"key{i}", f"value{i}") for i in range(100)])
 
         # Get all keys concurrently
-        results = await asyncio.gather(*[
-            get_value(f"key{i}")
-            for i in range(100)
-        ])
+        results = await asyncio.gather(*[get_value(f"key{i}") for i in range(100)])
 
         # Verify all values
         for i, result in enumerate(results):

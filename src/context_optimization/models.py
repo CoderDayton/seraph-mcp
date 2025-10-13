@@ -5,7 +5,7 @@ Minimal data models for AI-powered context optimization.
 """
 
 from datetime import datetime
-from typing import Optional
+
 from pydantic import BaseModel, Field
 
 
@@ -31,7 +31,7 @@ class OptimizationResult(BaseModel):
 
     # Cost tracking (for budget integration)
     cost_savings_usd: float = Field(default=0.0, ge=0, description="Cost savings in USD")
-    model_name: Optional[str] = Field(default=None, description="Model used for optimization")
+    model_name: str | None = Field(default=None, description="Model used for optimization")
 
     # Method used
     method: str = Field(default="ai", description="Compression method used: 'ai', 'seraph', or 'hybrid'")

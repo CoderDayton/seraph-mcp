@@ -11,10 +11,9 @@ Per SDD.md:
 - Comprehensive error handling
 """
 
-import asyncio
 import logging
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import httpx
 from pydantic import BaseModel, Field
@@ -27,8 +26,8 @@ class ModelCost(BaseModel):
 
     input: float = Field(0.0, description="Input cost per million tokens (USD)")
     output: float = Field(0.0, description="Output cost per million tokens (USD)")
-    cache_read: Optional[float] = Field(None, description="Cache read cost per million tokens (USD)")
-    cache_write: Optional[float] = Field(None, description="Cache write cost per million tokens (USD)")
+    cache_read: float | None = Field(None, description="Cache read cost per million tokens (USD)")
+    cache_write: float | None = Field(None, description="Cache write cost per million tokens (USD)")
 
 
 class ModelLimit(BaseModel):
@@ -41,8 +40,8 @@ class ModelLimit(BaseModel):
 class ModelModalities(BaseModel):
     """Input/output modalities supported by model."""
 
-    input: List[str] = Field(default_factory=list, description="Input modalities (text, image, audio, video)")
-    output: List[str] = Field(default_factory=list, description="Output modalities (text, image, audio)")
+    input: list[str] = Field(default_factory=list, description="Input modalities (text, image, audio, video)")
+    output: list[str] = Field(default_factory=list, description="Output modalities (text, image, audio)")
 
 
 class ModelInfo(BaseModel):
@@ -54,12 +53,12 @@ class ModelInfo(BaseModel):
     reasoning: bool = Field(False, description="Has reasoning capabilities")
     temperature: bool = Field(True, description="Supports temperature parameter")
     tool_call: bool = Field(False, description="Supports function/tool calling")
-    knowledge: Optional[str] = Field(None, description="Knowledge cutoff date")
-    release_date: Optional[str] = Field(None, description="Release date")
-    last_updated: Optional[str] = Field(None, description="Last updated date")
+    knowledge: str | None = Field(None, description="Knowledge cutoff date")
+    release_date: str | None = Field(None, description="Release date")
+    last_updated: str | None = Field(None, description="Last updated date")
     modalities: ModelModalities = Field(default_factory=ModelModalities, description="Supported modalities")
     open_weights: bool = Field(False, description="Model has open weights")
-    cost: Optional[ModelCost] = Field(None, description="Pricing information (optional)")
+    cost: ModelCost | None = Field(None, description="Pricing information (optional)")
     limit: ModelLimit = Field(..., description="Context and output limits")
 
 
@@ -69,10 +68,10 @@ class ProviderInfo(BaseModel):
     id: str = Field(..., description="Provider identifier")
     name: str = Field(..., description="Provider display name")
     api: str = Field(..., description="API base URL")
-    env: List[str] = Field(default_factory=list, description="Required environment variables")
+    env: list[str] = Field(default_factory=list, description="Required environment variables")
     npm: str = Field(..., description="NPM package name")
-    doc: Optional[str] = Field(None, description="Documentation URL")
-    models: Dict[str, ModelInfo] = Field(default_factory=dict, description="Available models")
+    doc: str | None = Field(None, description="Documentation URL")
+    models: dict[str, ModelInfo] = Field(default_factory=dict, description="Available models")
 
 
 class ModelsDevClient:
@@ -87,11 +86,11 @@ class ModelsDevClient:
 
     def __init__(self) -> None:
         """Initialize Models.dev client."""
-        self._cache: Optional[Dict[str, ProviderInfo]] = None
+        self._cache: dict[str, ProviderInfo] | None = None
         self._cache_time: float = 0.0
         self._client = httpx.AsyncClient(timeout=30.0)
 
-    async def _fetch_data(self) -> Dict[str, Any]:
+    async def _fetch_data(self) -> dict[str, Any]:
         """
         Fetch raw data from models.dev API.
 
@@ -106,9 +105,9 @@ class ModelsDevClient:
             response.raise_for_status()
             return response.json()
         except httpx.HTTPError as e:
-            raise RuntimeError(f"Failed to fetch models.dev API: {e}")
+            raise RuntimeError(f"Failed to fetch models.dev API: {e}") from e
         except Exception as e:
-            raise RuntimeError(f"Unexpected error fetching models.dev API: {e}")
+            raise RuntimeError(f"Unexpected error fetching models.dev API: {e}") from e
 
     def _is_cache_valid(self) -> bool:
         """Check if cache is still valid."""
@@ -117,7 +116,7 @@ class ModelsDevClient:
         elapsed = time.time() - self._cache_time
         return elapsed < self.CACHE_TTL_SECONDS
 
-    async def load_providers(self, force_refresh: bool = False) -> Dict[str, ProviderInfo]:
+    async def load_providers(self, force_refresh: bool = False) -> dict[str, ProviderInfo]:
         """
         Load all providers and their models.
 
@@ -168,7 +167,9 @@ class ModelsDevClient:
             self._cache = providers
             self._cache_time = time.time()
 
-            logger.info(f"Loaded {len(providers)} providers with {sum(len(p.models) for p in providers.values())} models")
+            logger.info(
+                f"Loaded {len(providers)} providers with {sum(len(p.models) for p in providers.values())} models"
+            )
 
             return providers
 
@@ -180,7 +181,7 @@ class ModelsDevClient:
                 return self._cache
             raise
 
-    async def get_provider(self, provider_id: str) -> Optional[ProviderInfo]:
+    async def get_provider(self, provider_id: str) -> ProviderInfo | None:
         """
         Get information about a specific provider.
 
@@ -193,7 +194,7 @@ class ModelsDevClient:
         providers = await self.load_providers()
         return providers.get(provider_id)
 
-    async def get_model(self, provider_id: str, model_id: str) -> Optional[ModelInfo]:
+    async def get_model(self, provider_id: str, model_id: str) -> ModelInfo | None:
         """
         Get information about a specific model.
 
@@ -209,7 +210,7 @@ class ModelsDevClient:
             return None
         return provider.models.get(model_id)
 
-    async def search_model(self, model_id: str) -> Optional[tuple[str, ModelInfo]]:
+    async def search_model(self, model_id: str) -> tuple[str, ModelInfo] | None:
         """
         Search for a model across all providers.
 
@@ -227,7 +228,7 @@ class ModelsDevClient:
 
         return None
 
-    async def list_all_models(self) -> List[tuple[str, str, ModelInfo]]:
+    async def list_all_models(self) -> list[tuple[str, str, ModelInfo]]:
         """
         List all available models across all providers.
 
@@ -243,7 +244,7 @@ class ModelsDevClient:
 
         return models
 
-    async def get_models_by_provider_type(self, provider_type: str) -> Dict[str, ModelInfo]:
+    async def get_models_by_provider_type(self, provider_type: str) -> dict[str, ModelInfo]:
         """
         Get all models for providers matching a type (e.g., 'openai', 'anthropic').
 
@@ -299,7 +300,7 @@ class ModelsDevClient:
 
 
 # Global singleton instance
-_client: Optional[ModelsDevClient] = None
+_client: ModelsDevClient | None = None
 
 
 def get_models_dev_client() -> ModelsDevClient:

@@ -13,7 +13,6 @@ Per SDD.md:
 
 import logging
 import time
-from typing import Dict, Optional, Tuple
 
 from .config import BudgetConfig, EnforcementMode
 from .tracker import BudgetTracker
@@ -43,8 +42,8 @@ class BudgetEnforcer:
 
     def check_budget(
         self,
-        estimated_cost: Optional[float] = None,
-    ) -> Tuple[bool, Dict[str, any]]:
+        estimated_cost: float | None = None,
+    ) -> tuple[bool, dict[str, any]]:
         """
         Check if budget allows a new request.
 
@@ -133,13 +132,10 @@ class BudgetEnforcer:
         period: str,
         current_spend: float,
         limit: float,
-        status: Dict[str, any],
-    ) -> Tuple[bool, Dict[str, any]]:
+        status: dict[str, any],
+    ) -> tuple[bool, dict[str, any]]:
         """Handle budget limit exceeded."""
-        message = (
-            f"Budget limit exceeded: {period} spending ${current_spend:.4f} "
-            f"exceeds limit of ${limit:.4f}"
-        )
+        message = f"Budget limit exceeded: {period} spending ${current_spend:.4f} exceeds limit of ${limit:.4f}"
 
         # Record alert
         self.tracker.record_alert(
@@ -198,10 +194,7 @@ class BudgetEnforcer:
         percentage: float,
     ) -> None:
         """Send alert for threshold crossing."""
-        message = (
-            f"Budget alert: {period} spending at {percentage*100:.1f}% "
-            f"(${current_spend:.4f} / ${limit:.4f})"
-        )
+        message = f"Budget alert: {period} spending at {percentage * 100:.1f}% (${current_spend:.4f} / ${limit:.4f})"
 
         # Record alert
         self.tracker.record_alert(
@@ -256,7 +249,7 @@ class BudgetEnforcer:
 
             with urllib.request.urlopen(req, timeout=5) as response:
                 if response.status == 200:
-                    logger.debug(f"Webhook alert sent successfully")
+                    logger.debug("Webhook alert sent successfully")
                 else:
                     logger.warning(f"Webhook returned status {response.status}")
 
@@ -268,7 +261,7 @@ class BudgetEnforcer:
         self._alert_state.clear()
         logger.info("Alert state reset")
 
-    def get_budget_status(self) -> Dict[str, any]:
+    def get_budget_status(self) -> dict[str, any]:
         """
         Get current budget status.
 
@@ -307,12 +300,12 @@ class BudgetEnforcer:
 
 
 # Global singleton
-_enforcer: Optional[BudgetEnforcer] = None
+_enforcer: BudgetEnforcer | None = None
 
 
 def get_budget_enforcer(
-    config: Optional[BudgetConfig] = None,
-    tracker: Optional[BudgetTracker] = None,
+    config: BudgetConfig | None = None,
+    tracker: BudgetTracker | None = None,
 ) -> BudgetEnforcer:
     """
     Get global budget enforcer instance.
@@ -331,6 +324,7 @@ def get_budget_enforcer(
             config = BudgetConfig()
         if tracker is None:
             from .tracker import get_budget_tracker
+
             tracker = get_budget_tracker()
         _enforcer = BudgetEnforcer(config, tracker)
 

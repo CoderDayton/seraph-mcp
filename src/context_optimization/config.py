@@ -6,6 +6,7 @@ AI-powered optimization with automatic learning.
 """
 
 import os
+
 from pydantic import BaseModel, Field
 
 
@@ -13,22 +14,19 @@ class ContextOptimizationConfig(BaseModel):
     """Minimal context optimization configuration"""
 
     # Core toggle
-    enabled: bool = Field(
-        default=True,
-        description="Enable automatic context optimization"
-    )
+    enabled: bool = Field(default=True, description="Enable automatic context optimization")
 
     # Compression method selection
     compression_method: str = Field(
         default="auto",
-        description="Compression method: 'ai' (AI-powered), 'seraph' (deterministic multi-layer), 'hybrid' (seraph + AI), 'auto' (size-based selection)"
+        description="Compression method: 'ai' (AI-powered), 'seraph' (deterministic multi-layer), 'hybrid' (seraph + AI), 'auto' (size-based selection)",
     )
 
     # Token threshold for method selection
     seraph_token_threshold: int = Field(
         default=3000,
         ge=100,
-        description="Token count threshold for auto mode: <=threshold uses AI, >threshold uses seraph"
+        description="Token count threshold for auto mode: <=threshold uses AI, >threshold uses seraph",
     )
 
     # Quality target
@@ -36,36 +34,32 @@ class ContextOptimizationConfig(BaseModel):
         default=0.90,
         ge=0.0,
         le=1.0,
-        description="Minimum quality score (0-1) to accept optimization"
+        description="Minimum quality score (0-1) to accept optimization",
     )
 
     # Performance limit
-    max_overhead_ms: float = Field(
-        default=100.0,
-        ge=0.0,
-        description="Maximum processing time in milliseconds"
-    )
+    max_overhead_ms: float = Field(default=100.0, ge=0.0, description="Maximum processing time in milliseconds")
 
     # Seraph compression ratios
     seraph_l1_ratio: float = Field(
         default=0.002,
         ge=0.001,
         le=0.01,
-        description="L1 layer ratio (ultra-small skeleton)"
+        description="L1 layer ratio (ultra-small skeleton)",
     )
 
     seraph_l2_ratio: float = Field(
         default=0.01,
         ge=0.005,
         le=0.05,
-        description="L2 layer ratio (compact abstracts)"
+        description="L2 layer ratio (compact abstracts)",
     )
 
     seraph_l3_ratio: float = Field(
         default=0.05,
         ge=0.02,
         le=0.15,
-        description="L3 layer ratio (larger factual extracts)"
+        description="L3 layer ratio (larger factual extracts)",
     )
 
     class Config:

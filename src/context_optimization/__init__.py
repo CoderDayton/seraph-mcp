@@ -12,15 +12,15 @@ Target: <100ms, >=90% quality, 20-40% token reduction
 """
 
 from .config import ContextOptimizationConfig, load_config
-from .models import OptimizationResult, FeedbackRecord
-from .optimizer import ContextOptimizer, optimize_content
 from .middleware import OptimizedProvider, wrap_provider
+from .models import FeedbackRecord, OptimizationResult
+from .optimizer import ContextOptimizer, optimize_content
 from .seraph_compression import (
-    SeraphCompressor,
     CompressionResult,
-    Tier1_500x,
-    Tier2_DCP,
-    Tier3_Hierarchical,
+    SeraphCompressor,
+    Tier2DCP,
+    Tier3Hierarchical,
+    Tier1500x,
 )
 
 __all__ = [
@@ -34,7 +34,7 @@ __all__ = [
     "wrap_provider",
     "SeraphCompressor",
     "CompressionResult",
-    "Tier1_500x",
-    "Tier2_DCP",
-    "Tier3_Hierarchical",
+    "Tier1500x",
+    "Tier2DCP",
+    "Tier3Hierarchical",
 ]

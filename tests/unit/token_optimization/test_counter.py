@@ -5,14 +5,15 @@ Tests the TokenCounter class with multi-provider token counting.
 Covers OpenAI, Anthropic, Google, and Mistral models with mocking.
 """
 
+from unittest.mock import Mock, patch
+
 import pytest
-from unittest.mock import Mock, patch, MagicMock
 
 from src.token_optimization.counter import (
-    TokenCounter,
     ModelProvider,
-    get_token_counter,
+    TokenCounter,
     count_tokens,
+    get_token_counter,
 )
 
 

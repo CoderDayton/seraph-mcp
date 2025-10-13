@@ -5,7 +5,7 @@ Defines standard exception hierarchy for the Seraph MCP core runtime.
 All exceptions should inherit from SeraphError for consistent error handling.
 """
 
-from typing import Any, Dict, Optional
+from typing import Any
 
 
 class SeraphError(Exception):
@@ -14,7 +14,7 @@ class SeraphError(Exception):
     def __init__(
         self,
         message: str,
-        details: Optional[Dict[str, Any]] = None,
+        details: dict[str, Any] | None = None,
         status_code: int = 500,
     ):
         super().__init__(message)
@@ -22,7 +22,7 @@ class SeraphError(Exception):
         self.details = details or {}
         self.status_code = status_code
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert exception to dictionary for API responses."""
         return {
             "error": self.__class__.__name__,
@@ -34,21 +34,21 @@ class SeraphError(Exception):
 class ConfigurationError(SeraphError):
     """Raised when configuration is invalid or missing."""
 
-    def __init__(self, message: str, details: Optional[Dict[str, Any]] = None):
+    def __init__(self, message: str, details: dict[str, Any] | None = None):
         super().__init__(message, details, status_code=500)
 
 
 class CacheError(SeraphError):
     """Base exception for cache-related errors."""
 
-    def __init__(self, message: str, details: Optional[Dict[str, Any]] = None):
+    def __init__(self, message: str, details: dict[str, Any] | None = None):
         super().__init__(message, details, status_code=500)
 
 
 class CacheConnectionError(CacheError):
     """Raised when cache backend connection fails."""
 
-    def __init__(self, backend: str, details: Optional[Dict[str, Any]] = None):
+    def __init__(self, backend: str, details: dict[str, Any] | None = None):
         message = f"Failed to connect to cache backend: {backend}"
         super().__init__(message, details)
 
@@ -62,14 +62,14 @@ class CacheOperationError(CacheError):
 class RoutingError(SeraphError):
     """Base exception for routing-related errors."""
 
-    def __init__(self, message: str, details: Optional[Dict[str, Any]] = None):
+    def __init__(self, message: str, details: dict[str, Any] | None = None):
         super().__init__(message, details, status_code=500)
 
 
 class ModelNotFoundError(RoutingError):
     """Raised when requested model is not available."""
 
-    def __init__(self, model_id: str, details: Optional[Dict[str, Any]] = None):
+    def __init__(self, model_id: str, details: dict[str, Any] | None = None):
         message = f"Model not found: {model_id}"
         super().__init__(message, details)
 
@@ -83,28 +83,28 @@ class RoutingPolicyError(RoutingError):
 class OptimizationError(SeraphError):
     """Base exception for optimization-related errors."""
 
-    def __init__(self, message: str, details: Optional[Dict[str, Any]] = None):
+    def __init__(self, message: str, details: dict[str, Any] | None = None):
         super().__init__(message, details, status_code=500)
 
 
 class QualityValidationError(SeraphError):
     """Raised when quality validation fails."""
 
-    def __init__(self, message: str, details: Optional[Dict[str, Any]] = None):
+    def __init__(self, message: str, details: dict[str, Any] | None = None):
         super().__init__(message, details, status_code=422)
 
 
 class BudgetExceededError(SeraphError):
     """Raised when budget limits are exceeded."""
 
-    def __init__(self, message: str, details: Optional[Dict[str, Any]] = None):
+    def __init__(self, message: str, details: dict[str, Any] | None = None):
         super().__init__(message, details, status_code=429)
 
 
 class ProviderError(SeraphError):
     """Base exception for provider-related errors."""
 
-    def __init__(self, message: str, details: Optional[Dict[str, Any]] = None):
+    def __init__(self, message: str, details: dict[str, Any] | None = None):
         super().__init__(message, details, status_code=502)
 
 
@@ -119,7 +119,7 @@ class ProviderTimeoutError(ProviderError):
 class ProviderRateLimitError(ProviderError):
     """Raised when provider rate limit is hit."""
 
-    def __init__(self, provider: str, retry_after: Optional[int] = None):
+    def __init__(self, provider: str, retry_after: int | None = None):
         message = f"Provider {provider} rate limit exceeded"
         details = {"provider": provider}
         if retry_after:
@@ -130,7 +130,7 @@ class ProviderRateLimitError(ProviderError):
 class ValidationError(SeraphError):
     """Raised when input validation fails."""
 
-    def __init__(self, message: str, details: Optional[Dict[str, Any]] = None):
+    def __init__(self, message: str, details: dict[str, Any] | None = None):
         super().__init__(message, details, status_code=400)
 
 

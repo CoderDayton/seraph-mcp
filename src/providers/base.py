@@ -13,18 +13,18 @@ Per SDD.md:
 """
 
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field
 
-from .models_dev import get_models_dev_client, ModelInfo as ModelsDevModelInfo
+from .models_dev import ModelInfo as ModelsDevModelInfo
+from .models_dev import get_models_dev_client
 
 
 class ProviderConfig(BaseModel):
     """Base configuration for all providers."""
 
     api_key: str = Field(..., description="API key for the provider")
-    base_url: Optional[str] = Field(None, description="Custom base URL (optional)")
+    base_url: str | None = Field(None, description="Custom base URL (optional)")
     timeout: float = Field(30.0, ge=1.0, description="Request timeout in seconds")
     max_retries: int = Field(3, ge=0, description="Maximum retry attempts")
     enabled: bool = Field(True, description="Whether this provider is enabled")
@@ -40,8 +40,9 @@ class ModelInfo(BaseModel):
     supports_streaming: bool = Field(True, description="Whether model supports streaming")
     input_cost_per_1k: float = Field(..., description="Cost per 1K input tokens (USD)")
     output_cost_per_1k: float = Field(..., description="Cost per 1K output tokens (USD)")
-    capabilities: List[str] = Field(
-        default_factory=list, description="Model capabilities (e.g., 'chat', 'completion', 'vision')"
+    capabilities: list[str] = Field(
+        default_factory=list,
+        description="Model capabilities (e.g., 'chat', 'completion', 'vision')",
     )
 
     @classmethod
@@ -91,9 +92,9 @@ class CompletionRequest(BaseModel):
     """Standardized completion request."""
 
     model: str = Field(..., description="Model identifier")
-    messages: List[Dict[str, str]] = Field(..., description="Chat messages")
+    messages: list[dict[str, str]] = Field(..., description="Chat messages")
     temperature: float = Field(0.7, ge=0.0, le=2.0, description="Sampling temperature")
-    max_tokens: Optional[int] = Field(None, description="Maximum tokens to generate")
+    max_tokens: int | None = Field(None, description="Maximum tokens to generate")
     stream: bool = Field(False, description="Whether to stream the response")
 
     class Config:
@@ -105,7 +106,7 @@ class CompletionResponse(BaseModel):
 
     content: str = Field(..., description="Generated content")
     model: str = Field(..., description="Model used")
-    usage: Dict[str, int] = Field(..., description="Token usage statistics")
+    usage: dict[str, int] = Field(..., description="Token usage statistics")
     finish_reason: str = Field(..., description="Why generation stopped")
     provider: str = Field(..., description="Provider name")
     latency_ms: float = Field(..., description="Request latency in milliseconds")
@@ -148,7 +149,7 @@ class BaseProvider(ABC):
         pass
 
     @property
-    def models_dev_provider_id(self) -> Optional[str]:
+    def models_dev_provider_id(self) -> str | None:
         """
         Return the Models.dev provider ID for this provider.
 
@@ -174,7 +175,7 @@ class BaseProvider(ABC):
         """
         pass
 
-    async def list_models(self) -> List[ModelInfo]:
+    async def list_models(self) -> list[ModelInfo]:
         """
         List all available models for this provider.
 
@@ -192,15 +193,12 @@ class BaseProvider(ABC):
             if not provider:
                 return []
 
-            return [
-                ModelInfo.from_models_dev(model_info)
-                for model_info in provider.models.values()
-            ]
-        except Exception as e:
+            return [ModelInfo.from_models_dev(model_info) for model_info in provider.models.values()]
+        except Exception:
             # Fallback to empty list on error
             return []
 
-    async def get_model_info(self, model_id: str) -> Optional[ModelInfo]:
+    async def get_model_info(self, model_id: str) -> ModelInfo | None:
         """
         Get information about a specific model.
 
@@ -217,9 +215,7 @@ class BaseProvider(ABC):
             return None
 
         try:
-            model_info = await self._models_dev_client.get_model(
-                self.models_dev_provider_id, model_id
-            )
+            model_info = await self._models_dev_client.get_model(self.models_dev_provider_id, model_id)
             if not model_info:
                 return None
 
@@ -227,9 +223,7 @@ class BaseProvider(ABC):
         except Exception:
             return None
 
-    async def estimate_cost(
-        self, model_id: str, input_tokens: int, output_tokens: int
-    ) -> float:
+    async def estimate_cost(self, model_id: str, input_tokens: int, output_tokens: int) -> float:
         """
         Estimate the cost for a completion request.
 
@@ -267,6 +261,7 @@ class BaseProvider(ABC):
         """
         pass
 
+    @abstractmethod
     async def close(self) -> None:
         """Clean up resources. Override if needed."""
         pass

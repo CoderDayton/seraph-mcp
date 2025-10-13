@@ -5,14 +5,14 @@ Tests the complete token optimization feature integration with the MCP server.
 Covers end-to-end workflows, feature flags, cache integration, and observability.
 """
 
-import pytest
 import asyncio
-from unittest.mock import Mock, patch, AsyncMock
-from typing import Any, Dict
+from typing import Any
+from unittest.mock import AsyncMock, Mock, patch
 
-from src.token_optimization.tools import TokenOptimizationTools
+import pytest
+
 from src.token_optimization.config import TokenOptimizationConfig
-from src.config.schemas import FeatureFlags
+from src.token_optimization.tools import TokenOptimizationTools
 
 
 class TestTokenOptimizationIntegration:
@@ -345,7 +345,8 @@ class TestPerformanceIntegration:
     @pytest.mark.asyncio
     async def test_concurrent_requests(self, tools):
         """Test handling concurrent optimization requests."""
-        async def optimize_task(content: str, idx: int) -> Dict[str, Any]:
+
+        async def optimize_task(content: str, idx: int) -> dict[str, Any]:
             with patch.object(tools.counter, "count_tokens", side_effect=[50, 45]):
                 return tools.optimize_tokens(
                     content=f"{content} {idx}",
@@ -427,7 +428,7 @@ class TestCacheIntegration:
     async def test_cache_stores_results(self, tools_with_cache):
         """Test that optimization results are cached."""
         with patch.object(tools_with_cache.counter, "count_tokens", side_effect=[20, 18]):
-            result = tools_with_cache.optimize_tokens(
+            tools_with_cache.optimize_tokens(
                 content="Test content",
                 model="gpt-4",
             )

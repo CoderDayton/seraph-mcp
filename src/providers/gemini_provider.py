@@ -13,11 +13,11 @@ Per SDD.md:
 """
 
 import time
-from typing import Any, Dict, List, Optional
 
 try:
     from google import genai
     from google.genai.types import GenerateContentConfig
+
     GEMINI_AVAILABLE = True
 except ImportError:
     GEMINI_AVAILABLE = False
@@ -26,7 +26,6 @@ from .base import (
     BaseProvider,
     CompletionRequest,
     CompletionResponse,
-    ModelInfo,
     ProviderConfig,
 )
 
@@ -39,9 +38,7 @@ class GeminiProvider(BaseProvider):
         super().__init__(config)
 
         if not GEMINI_AVAILABLE:
-            raise RuntimeError(
-                "Google Gemini SDK not available. Install with: pip install google-genai>=0.2.0"
-            )
+            raise RuntimeError("Google Gemini SDK not available. Install with: pip install google-genai>=0.2.0")
 
         # Create async client
         self.client = genai.Client(api_key=config.api_key)
@@ -60,13 +57,13 @@ class GeminiProvider(BaseProvider):
         return "gemini"
 
     @property
-    def models_dev_provider_id(self) -> Optional[str]:
+    def models_dev_provider_id(self) -> str | None:
         """Return Models.dev provider ID."""
         return "google"
 
     def _convert_messages_to_gemini_format(
-        self, messages: List[Dict[str, str]]
-    ) -> tuple[Optional[str], List[Dict[str, str]]]:
+        self, messages: list[dict[str, str]]
+    ) -> tuple[str | None, list[dict[str, str]]]:
         """
         Convert standard message format to Gemini format.
 
@@ -105,9 +102,7 @@ class GeminiProvider(BaseProvider):
 
         try:
             # Convert messages
-            system_instruction, converted_messages = self._convert_messages_to_gemini_format(
-                request.messages
-            )
+            system_instruction, converted_messages = self._convert_messages_to_gemini_format(request.messages)
 
             # Prepare generation config
             config = GenerateContentConfig(
@@ -119,10 +114,12 @@ class GeminiProvider(BaseProvider):
             # Build contents from messages
             contents = []
             for msg in converted_messages:
-                contents.append({
-                    "role": msg["role"],
-                    "parts": msg["parts"],
-                })
+                contents.append(
+                    {
+                        "role": msg["role"],
+                        "parts": msg["parts"],
+                    }
+                )
 
             # Generate content
             response = await self.client.aio.models.generate_content(
@@ -171,7 +168,7 @@ class GeminiProvider(BaseProvider):
             )
 
         except Exception as e:
-            raise RuntimeError(f"Error calling Gemini API: {e}")
+            raise RuntimeError(f"Error calling Gemini API: {e}") from e
 
     async def health_check(self) -> bool:
         """Check if Gemini API is accessible."""

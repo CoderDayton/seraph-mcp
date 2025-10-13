@@ -5,7 +5,7 @@ Defines the abstract interface that all cache backends must implement.
 """
 
 from abc import ABC, abstractmethod
-from typing import Any, Optional
+from typing import Any
 
 
 class CacheInterface(ABC):
@@ -17,7 +17,7 @@ class CacheInterface(ABC):
     """
 
     @abstractmethod
-    async def get(self, key: str) -> Optional[Any]:
+    async def get(self, key: str) -> Any | None:
         """
         Retrieve a value from the cache.
 
@@ -34,7 +34,7 @@ class CacheInterface(ABC):
         self,
         key: str,
         value: Any,
-        ttl: Optional[int] = None,
+        ttl: int | None = None,
     ) -> bool:
         """
         Store a value in the cache.
@@ -127,7 +127,7 @@ class CacheInterface(ABC):
     async def set_many(
         self,
         items: dict[str, Any],
-        ttl: Optional[int] = None,
+        ttl: int | None = None,
     ) -> int:
         """
         Store multiple values in the cache.

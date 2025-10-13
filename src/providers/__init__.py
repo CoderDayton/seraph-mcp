@@ -51,6 +51,8 @@ Usage:
     >>> print(response.content)
 """
 
+# Provider implementations
+from .anthropic_provider import AnthropicProvider
 from .base import (
     BaseProvider,
     CompletionRequest,
@@ -67,15 +69,12 @@ from .factory import (
     list_providers,
     reset_factory,
 )
+from .gemini_provider import GeminiProvider
 from .models_dev import (
     ModelsDevClient,
-    get_models_dev_client,
     close_models_dev_client,
+    get_models_dev_client,
 )
-
-# Provider implementations
-from .anthropic_provider import AnthropicProvider
-from .gemini_provider import GeminiProvider
 from .openai_compatible import OpenAICompatibleProvider
 from .openai_provider import OpenAIProvider
 

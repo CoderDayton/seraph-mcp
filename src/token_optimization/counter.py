@@ -7,7 +7,6 @@ Supports OpenAI (via tiktoken) and Anthropic (via anthropic library).
 
 import logging
 from enum import Enum
-from typing import Dict, Optional
 
 try:
     import tiktoken
@@ -24,6 +23,7 @@ logger = logging.getLogger(__name__)
 
 class ModelProvider(str, Enum):
     """Supported model providers for token counting."""
+
     OPENAI = "openai"
     ANTHROPIC = "anthropic"
     GOOGLE = "google"
@@ -40,7 +40,7 @@ class TokenCounter:
     """
 
     # Model to provider mapping
-    MODEL_PROVIDERS: Dict[str, ModelProvider] = {
+    MODEL_PROVIDERS: dict[str, ModelProvider] = {
         # OpenAI models
         "gpt-4": ModelProvider.OPENAI,
         "gpt-4-turbo": ModelProvider.OPENAI,
@@ -52,7 +52,6 @@ class TokenCounter:
         "text-embedding-3-small": ModelProvider.OPENAI,
         "text-embedding-3-large": ModelProvider.OPENAI,
         "text-embedding-ada-002": ModelProvider.OPENAI,
-
         # Anthropic models
         "claude-3-opus": ModelProvider.ANTHROPIC,
         "claude-3-sonnet": ModelProvider.ANTHROPIC,
@@ -62,13 +61,11 @@ class TokenCounter:
         "claude-2.1": ModelProvider.ANTHROPIC,
         "claude-2.0": ModelProvider.ANTHROPIC,
         "claude-instant-1.2": ModelProvider.ANTHROPIC,
-
         # Google models
         "gemini-pro": ModelProvider.GOOGLE,
         "gemini-pro-vision": ModelProvider.GOOGLE,
         "gemini-1.5-pro": ModelProvider.GOOGLE,
         "gemini-1.5-flash": ModelProvider.GOOGLE,
-
         # Mistral models
         "mistral-large": ModelProvider.MISTRAL,
         "mistral-medium": ModelProvider.MISTRAL,
@@ -77,7 +74,7 @@ class TokenCounter:
     }
 
     # Encoding cache for tiktoken
-    _encoding_cache: Dict[str, any] = {}
+    _encoding_cache: dict[str, any] = {}
 
     def __init__(self) -> None:
         """Initialize token counter."""
@@ -86,13 +83,9 @@ class TokenCounter:
     def _validate_dependencies(self) -> None:
         """Log warnings if optional dependencies are missing."""
         if tiktoken is None:
-            logger.warning(
-                "tiktoken not installed. OpenAI token counting will use estimation."
-            )
+            logger.warning("tiktoken not installed. OpenAI token counting will use estimation.")
         if Anthropic is None:
-            logger.warning(
-                "anthropic not installed. Anthropic token counting will use estimation."
-            )
+            logger.warning("anthropic not installed. Anthropic token counting will use estimation.")
 
     def count_tokens(self, content: str, model: str = "gpt-4") -> int:
         """
@@ -225,11 +218,7 @@ class TokenCounter:
         # Simple estimation: 4 chars ≈ 1 token
         return max(1, len(content) // 4)
 
-    def get_token_breakdown(
-        self,
-        content: str,
-        model: str = "gpt-4"
-    ) -> Dict[str, any]:
+    def get_token_breakdown(self, content: str, model: str = "gpt-4") -> dict[str, any]:
         """
         Get detailed token breakdown with metadata.
 
@@ -252,11 +241,7 @@ class TokenCounter:
             "method": "exact" if provider in [ModelProvider.OPENAI, ModelProvider.ANTHROPIC] else "estimated",
         }
 
-    def compare_models(
-        self,
-        content: str,
-        models: Optional[list[str]] = None
-    ) -> Dict[str, int]:
+    def compare_models(self, content: str, models: list[str] | None = None) -> dict[str, int]:
         """
         Compare token counts across multiple models.
 
@@ -270,14 +255,11 @@ class TokenCounter:
         if models is None:
             models = ["gpt-4", "gpt-3.5-turbo", "claude-3-opus", "claude-3-haiku"]
 
-        return {
-            model: self.count_tokens(content, model)
-            for model in models
-        }
+        return {model: self.count_tokens(content, model) for model in models}
 
 
 # Singleton instance
-_counter_instance: Optional[TokenCounter] = None
+_counter_instance: TokenCounter | None = None
 
 
 def get_token_counter() -> TokenCounter:

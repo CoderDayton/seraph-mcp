@@ -5,14 +5,15 @@ Tests the TokenOptimizer class with all optimization strategies.
 Covers whitespace, redundancy, compression, deduplication, and quality metrics.
 """
 
-import pytest
-from unittest.mock import Mock, patch, MagicMock
 import time
+from unittest.mock import Mock, patch
+
+import pytest
 
 from src.token_optimization.optimizer import (
-    TokenOptimizer,
-    OptimizationStrategy,
     OptimizationResult,
+    OptimizationStrategy,
+    TokenOptimizer,
     get_optimizer,
 )
 

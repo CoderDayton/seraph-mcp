@@ -14,18 +14,19 @@ Per SDD.md:
 import hashlib
 import logging
 import time
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 try:
     import chromadb
     from chromadb.config import Settings
+
     CHROMADB_AVAILABLE = True
 except ImportError:
     CHROMADB_AVAILABLE = False
 
+from ..providers import ProviderConfig
 from .config import SemanticCacheConfig
 from .embeddings import EmbeddingGenerator
-from ..providers import ProviderConfig
 
 logger = logging.getLogger(__name__)
 
@@ -45,12 +46,10 @@ class SemanticCache:
             config: Semantic cache configuration
         """
         if not CHROMADB_AVAILABLE:
-            raise RuntimeError(
-                "chromadb not installed. Install with: pip install chromadb>=0.4.0"
-            )
+            raise RuntimeError("chromadb not installed. Install with: pip install chromadb>=0.4.0")
 
         self.config = config
-        self._embedding_generator: Optional[EmbeddingGenerator] = None
+        self._embedding_generator: EmbeddingGenerator | None = None
         self._client = None
         self._collection = None
 
@@ -62,13 +61,13 @@ class SemanticCache:
         logger.info(f"Initializing ChromaDB at {self.config.persist_directory}")
         self._client = chromadb.PersistentClient(
             path=self.config.persist_directory,
-            settings=Settings(anonymized_telemetry=False)
+            settings=Settings(anonymized_telemetry=False),
         )
 
         # Get or create collection
         self._collection = self._client.get_or_create_collection(
             name=self.config.collection_name,
-            metadata={"description": "Seraph MCP semantic cache"}
+            metadata={"description": "Seraph MCP semantic cache"},
         )
 
         logger.info(f"ChromaDB collection '{self.config.collection_name}' ready")
@@ -102,9 +101,9 @@ class SemanticCache:
     async def get(
         self,
         query: str,
-        threshold: Optional[float] = None,
+        threshold: float | None = None,
         max_results: int = 1,
-    ) -> Optional[Dict[str, Any]]:
+    ) -> dict[str, Any] | None:
         """
         Get cached value by semantic similarity.
 
@@ -133,11 +132,11 @@ class SemanticCache:
             )
 
             # Check if we have results
-            if not results['ids'] or not results['ids'][0]:
+            if not results["ids"] or not results["ids"][0]:
                 return None
 
             # Get best match
-            best_distance = results['distances'][0][0]
+            best_distance = results["distances"][0][0]
             best_similarity = 1 - best_distance  # Convert distance to similarity
 
             if best_similarity < threshold:
@@ -145,10 +144,10 @@ class SemanticCache:
 
             # Return cached value
             return {
-                "value": results['documents'][0][0],
-                "metadata": results['metadatas'][0][0],
+                "value": results["documents"][0][0],
+                "metadata": results["metadatas"][0][0],
                 "similarity": best_similarity,
-                "id": results['ids'][0][0],
+                "id": results["ids"][0][0],
             }
 
         except Exception as e:
@@ -159,7 +158,7 @@ class SemanticCache:
         self,
         key: str,
         value: Any,
-        metadata: Optional[Dict[str, Any]] = None,
+        metadata: dict[str, Any] | None = None,
     ) -> bool:
         """
         Store value in semantic cache.
@@ -185,10 +184,12 @@ class SemanticCache:
 
             # Prepare metadata
             meta = metadata or {}
-            meta.update({
-                "timestamp": time.time(),
-                "key": key,
-            })
+            meta.update(
+                {
+                    "timestamp": time.time(),
+                    "key": key,
+                }
+            )
 
             # Convert value to string if needed
             value_str = str(value)
@@ -210,9 +211,9 @@ class SemanticCache:
     async def search(
         self,
         query: str,
-        limit: Optional[int] = None,
-        threshold: Optional[float] = None,
-    ) -> List[Dict[str, Any]]:
+        limit: int | None = None,
+        threshold: float | None = None,
+    ) -> list[dict[str, Any]]:
         """
         Search for similar entries.
 
@@ -243,18 +244,20 @@ class SemanticCache:
 
             # Format results
             entries = []
-            if results['ids'] and results['ids'][0]:
-                for i, entry_id in enumerate(results['ids'][0]):
-                    distance = results['distances'][0][i]
+            if results["ids"] and results["ids"][0]:
+                for i, entry_id in enumerate(results["ids"][0]):
+                    distance = results["distances"][0][i]
                     similarity = 1 - distance
 
                     if similarity >= threshold:
-                        entries.append({
-                            "id": entry_id,
-                            "value": results['documents'][0][i],
-                            "metadata": results['metadatas'][0][i],
-                            "similarity": similarity,
-                        })
+                        entries.append(
+                            {
+                                "id": entry_id,
+                                "value": results["documents"][0][i],
+                                "metadata": results["metadatas"][0][i],
+                                "similarity": similarity,
+                            }
+                        )
 
             return entries
 
@@ -262,7 +265,7 @@ class SemanticCache:
             logger.error(f"Error searching semantic cache: {e}")
             return []
 
-    def clear(self, namespace: Optional[str] = None) -> bool:
+    def clear(self, namespace: str | None = None) -> bool:
         """
         Clear cache entries.
 
@@ -277,7 +280,7 @@ class SemanticCache:
             self._client.delete_collection(name=self.config.collection_name)
             self._collection = self._client.get_or_create_collection(
                 name=self.config.collection_name,
-                metadata={"description": "Seraph MCP semantic cache"}
+                metadata={"description": "Seraph MCP semantic cache"},
             )
             logger.info("Semantic cache cleared")
             return True
@@ -285,7 +288,7 @@ class SemanticCache:
             logger.error(f"Error clearing semantic cache: {e}")
             return False
 
-    def get_stats(self) -> Dict[str, Any]:
+    def get_stats(self) -> dict[str, Any]:
         """
         Get cache statistics.
 
@@ -318,10 +321,10 @@ class SemanticCache:
 
 
 # Global singleton
-_cache: Optional[SemanticCache] = None
+_cache: SemanticCache | None = None
 
 
-def get_semantic_cache(config: Optional[SemanticCacheConfig] = None) -> SemanticCache:
+def get_semantic_cache(config: SemanticCacheConfig | None = None) -> SemanticCache:
     """
     Get global semantic cache instance.
 

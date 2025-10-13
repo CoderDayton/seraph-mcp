@@ -14,9 +14,8 @@ Per SDD.md:
 import logging
 import sqlite3
 import time
-from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -128,7 +127,7 @@ class BudgetTracker:
         output_tokens: int,
         cost_usd: float,
         operation: str = "completion",
-        metadata: Optional[str] = None,
+        metadata: str | None = None,
     ) -> bool:
         """
         Track a cost record.
@@ -147,20 +146,23 @@ class BudgetTracker:
         """
         conn = self._get_connection()
         try:
-            conn.execute("""
+            conn.execute(
+                """
                 INSERT INTO cost_records
                 (timestamp, provider, model, operation, input_tokens, output_tokens, cost_usd, metadata)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """, (
-                time.time(),
-                provider,
-                model,
-                operation,
-                input_tokens,
-                output_tokens,
-                cost_usd,
-                metadata,
-            ))
+            """,
+                (
+                    time.time(),
+                    provider,
+                    model,
+                    operation,
+                    input_tokens,
+                    output_tokens,
+                    cost_usd,
+                    metadata,
+                ),
+            )
             conn.commit()
             logger.debug(f"Tracked cost: {provider}/{model} = ${cost_usd:.6f}")
             return True
@@ -173,9 +175,9 @@ class BudgetTracker:
     def get_spending(
         self,
         period: str = "day",
-        start_time: Optional[float] = None,
-        end_time: Optional[float] = None,
-    ) -> Dict[str, Any]:
+        start_time: float | None = None,
+        end_time: float | None = None,
+    ) -> dict[str, Any]:
         """
         Get spending for a time period.
 
@@ -204,7 +206,8 @@ class BudgetTracker:
         conn = self._get_connection()
         try:
             # Get total spending
-            result = conn.execute("""
+            result = conn.execute(
+                """
                 SELECT
                     COUNT(*) as request_count,
                     SUM(cost_usd) as total_cost,
@@ -214,10 +217,13 @@ class BudgetTracker:
                     MAX(timestamp) as last_request
                 FROM cost_records
                 WHERE timestamp >= ? AND timestamp <= ?
-            """, (start, now)).fetchone()
+            """,
+                (start, now),
+            ).fetchone()
 
             # Get spending by provider
-            by_provider = conn.execute("""
+            by_provider = conn.execute(
+                """
                 SELECT
                     provider,
                     COUNT(*) as request_count,
@@ -228,10 +234,13 @@ class BudgetTracker:
                 WHERE timestamp >= ? AND timestamp <= ?
                 GROUP BY provider
                 ORDER BY total_cost DESC
-            """, (start, now)).fetchall()
+            """,
+                (start, now),
+            ).fetchall()
 
             # Get spending by model
-            by_model = conn.execute("""
+            by_model = conn.execute(
+                """
                 SELECT
                     provider,
                     model,
@@ -242,7 +251,9 @@ class BudgetTracker:
                 GROUP BY provider, model
                 ORDER BY total_cost DESC
                 LIMIT 10
-            """, (start, now)).fetchall()
+            """,
+                (start, now),
+            ).fetchall()
 
             return {
                 "period": period,
@@ -263,7 +274,7 @@ class BudgetTracker:
         finally:
             conn.close()
 
-    def get_daily_spending_history(self, days: int = 30) -> List[Dict[str, Any]]:
+    def get_daily_spending_history(self, days: int = 30) -> list[dict[str, Any]]:
         """
         Get daily spending for the last N days.
 
@@ -277,7 +288,8 @@ class BudgetTracker:
         try:
             start_time = time.time() - (days * 86400)
 
-            results = conn.execute("""
+            results = conn.execute(
+                """
                 SELECT
                     DATE(datetime(timestamp, 'unixepoch')) as date,
                     COUNT(*) as request_count,
@@ -288,7 +300,9 @@ class BudgetTracker:
                 WHERE timestamp >= ?
                 GROUP BY date
                 ORDER BY date ASC
-            """, (start_time,)).fetchall()
+            """,
+                (start_time,),
+            ).fetchall()
 
             return [dict(row) for row in results]
         except Exception as e:
@@ -320,18 +334,21 @@ class BudgetTracker:
         """
         conn = self._get_connection()
         try:
-            conn.execute("""
+            conn.execute(
+                """
                 INSERT INTO budget_alerts
                 (timestamp, period_type, threshold, current_spend, budget_limit, message)
                 VALUES (?, ?, ?, ?, ?, ?)
-            """, (
-                time.time(),
-                period_type,
-                threshold,
-                current_spend,
-                budget_limit,
-                message,
-            ))
+            """,
+                (
+                    time.time(),
+                    period_type,
+                    threshold,
+                    current_spend,
+                    budget_limit,
+                    message,
+                ),
+            )
             conn.commit()
             logger.info(f"Budget alert recorded: {message}")
             return True
@@ -341,7 +358,7 @@ class BudgetTracker:
         finally:
             conn.close()
 
-    def get_alerts(self, limit: int = 100) -> List[Dict[str, Any]]:
+    def get_alerts(self, limit: int = 100) -> list[dict[str, Any]]:
         """
         Get recent budget alerts.
 
@@ -353,12 +370,15 @@ class BudgetTracker:
         """
         conn = self._get_connection()
         try:
-            results = conn.execute("""
+            results = conn.execute(
+                """
                 SELECT *
                 FROM budget_alerts
                 ORDER BY timestamp DESC
                 LIMIT ?
-            """, (limit,)).fetchall()
+            """,
+                (limit,),
+            ).fetchall()
 
             return [dict(row) for row in results]
         except Exception as e:
@@ -380,10 +400,13 @@ class BudgetTracker:
         conn = self._get_connection()
         try:
             cutoff_time = time.time() - (days * 86400)
-            cursor = conn.execute("""
+            cursor = conn.execute(
+                """
                 DELETE FROM cost_records
                 WHERE timestamp < ?
-            """, (cutoff_time,))
+            """,
+                (cutoff_time,),
+            )
             deleted = cursor.rowcount
             conn.commit()
             logger.info(f"Cleared {deleted} old cost records")
@@ -394,7 +417,7 @@ class BudgetTracker:
         finally:
             conn.close()
 
-    def get_stats(self) -> Dict[str, Any]:
+    def get_stats(self) -> dict[str, Any]:
         """
         Get tracker statistics.
 
@@ -439,7 +462,7 @@ class BudgetTracker:
 
 
 # Global singleton
-_tracker: Optional[BudgetTracker] = None
+_tracker: BudgetTracker | None = None
 
 
 def get_budget_tracker(db_path: str = "./data/budget.db") -> BudgetTracker:

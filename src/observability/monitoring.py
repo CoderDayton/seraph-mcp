@@ -18,18 +18,14 @@ import time
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any
 from uuid import uuid4
 
 # Trace ID context variable for distributed tracing
-_trace_id_ctx: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar(
-    "trace_id", default=None
-)
+_trace_id_ctx: contextvars.ContextVar[str | None] = contextvars.ContextVar("trace_id", default=None)
 
 # Request ID context variable
-_request_id_ctx: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar(
-    "request_id", default=None
-)
+_request_id_ctx: contextvars.ContextVar[str | None] = contextvars.ContextVar("request_id", default=None)
 
 
 @dataclass
@@ -95,7 +91,7 @@ class ObservabilityAdapter:
         self,
         metric: str,
         value: float = 1.0,
-        tags: Optional[dict[str, str]] = None,
+        tags: dict[str, str] | None = None,
     ) -> None:
         """
         Increment a counter metric.
@@ -124,7 +120,7 @@ class ObservabilityAdapter:
         self,
         metric: str,
         value: float,
-        tags: Optional[dict[str, str]] = None,
+        tags: dict[str, str] | None = None,
     ) -> None:
         """
         Set a gauge metric.
@@ -147,7 +143,7 @@ class ObservabilityAdapter:
         self,
         metric: str,
         value: float,
-        tags: Optional[dict[str, str]] = None,
+        tags: dict[str, str] | None = None,
     ) -> None:
         """
         Record a histogram metric (for latencies, sizes, etc.).
@@ -184,7 +180,7 @@ class ObservabilityAdapter:
         )
 
     @contextmanager
-    def trace(self, span_name: str, tags: Optional[dict[str, str]] = None):
+    def trace(self, span_name: str, tags: dict[str, str] | None = None):
         """
         Context manager for tracing a span.
 
@@ -231,7 +227,7 @@ class ObservabilityAdapter:
         finally:
             duration_ms = (time.perf_counter() - start_time) * 1000
             self.histogram(
-                f"span.duration",
+                "span.duration",
                 duration_ms,
                 tags={"span_name": span_name, **tags},
             )
@@ -246,7 +242,7 @@ class ObservabilityAdapter:
                 },
             )
 
-    def get_trace_id(self) -> Optional[str]:
+    def get_trace_id(self) -> str | None:
         """Get current trace ID from context."""
         return _trace_id_ctx.get()
 
@@ -260,7 +256,7 @@ class ObservabilityAdapter:
         self.set_trace_id(trace_id)
         return trace_id
 
-    def get_request_id(self) -> Optional[str]:
+    def get_request_id(self) -> str | None:
         """Get current request ID from context."""
         return _request_id_ctx.get()
 
@@ -335,7 +331,7 @@ class JSONFormatter(logging.Formatter):
 
 
 # Global observability adapter instance (singleton per SDD.md)
-_observability_adapter: Optional[ObservabilityAdapter] = None
+_observability_adapter: ObservabilityAdapter | None = None
 
 
 def get_observability() -> ObservabilityAdapter:

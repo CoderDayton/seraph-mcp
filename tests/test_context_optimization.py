@@ -2,14 +2,14 @@
 Tests for Context Optimization module
 """
 
-import pytest
 import asyncio
+
+import pytest
+
 from src.context_optimization import (
     ContextOptimizationConfig,
-    load_config,
     ContextOptimizer,
-    optimize_content,
-    OptimizationResult,
+    load_config,
 )
 
 
@@ -110,18 +110,18 @@ def test_optimizer_cache_operations():
 async def test_optimizer_timeout_handling():
     """Test that optimizer respects timeout"""
     config = ContextOptimizationConfig(enabled=True, max_overhead_ms=1.0)  # Very short timeout
-    
+
     # Mock provider that takes too long
     class SlowProvider:
         async def generate(self, **kwargs):
             await asyncio.sleep(1.0)  # Sleep longer than timeout
             return {"content": "compressed"}
-    
+
     optimizer = ContextOptimizer(config=config, provider=SlowProvider())
-    
+
     content = "This content would take too long to optimize."
     result = await optimizer.optimize(content, timeout_ms=1.0)
-    
+
     # Should rollback due to timeout
     assert result.optimized_content == content
     assert result.rollback_occurred is True

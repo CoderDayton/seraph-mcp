@@ -13,11 +13,12 @@ Per SDD.md:
 """
 
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 try:
     import anthropic
     from anthropic import AsyncAnthropic
+
     ANTHROPIC_AVAILABLE = True
 except ImportError:
     ANTHROPIC_AVAILABLE = False
@@ -26,7 +27,6 @@ from .base import (
     BaseProvider,
     CompletionRequest,
     CompletionResponse,
-    ModelInfo,
     ProviderConfig,
 )
 
@@ -39,12 +39,10 @@ class AnthropicProvider(BaseProvider):
         super().__init__(config)
 
         if not ANTHROPIC_AVAILABLE:
-            raise RuntimeError(
-                "Anthropic SDK not available. Install with: pip install anthropic>=0.25.0"
-            )
+            raise RuntimeError("Anthropic SDK not available. Install with: pip install anthropic>=0.25.0")
 
         # Initialize async client
-        client_kwargs: Dict[str, Any] = {
+        client_kwargs: dict[str, Any] = {
             "api_key": config.api_key,
             "timeout": config.timeout,
             "max_retries": config.max_retries,
@@ -69,11 +67,11 @@ class AnthropicProvider(BaseProvider):
         return "anthropic"
 
     @property
-    def models_dev_provider_id(self) -> Optional[str]:
+    def models_dev_provider_id(self) -> str | None:
         """Return Models.dev provider ID."""
         return "anthropic"
 
-    def _convert_messages(self, messages: List[Dict[str, str]]) -> List[Dict[str, Any]]:
+    def _convert_messages(self, messages: list[dict[str, str]]) -> list[dict[str, Any]]:
         """Convert standard message format to Anthropic format."""
         # Anthropic expects messages in a specific format
         converted = []
@@ -86,14 +84,16 @@ class AnthropicProvider(BaseProvider):
                 # System messages are handled separately in Anthropic API
                 continue
 
-            converted.append({
-                "role": role,
-                "content": content,
-            })
+            converted.append(
+                {
+                    "role": role,
+                    "content": content,
+                }
+            )
 
         return converted
 
-    def _extract_system_message(self, messages: List[Dict[str, str]]) -> Optional[str]:
+    def _extract_system_message(self, messages: list[dict[str, str]]) -> str | None:
         """Extract system message from messages list."""
         for msg in messages:
             if msg.get("role") == "system":
@@ -113,7 +113,7 @@ class AnthropicProvider(BaseProvider):
             system_message = self._extract_system_message(request.messages)
 
             # Prepare API request
-            api_params: Dict[str, Any] = {
+            api_params: dict[str, Any] = {
                 "model": request.model,
                 "messages": converted_messages,
                 "temperature": request.temperature,
@@ -145,10 +145,7 @@ class AnthropicProvider(BaseProvider):
             usage = {
                 "prompt_tokens": response.usage.input_tokens if response.usage else 0,
                 "completion_tokens": response.usage.output_tokens if response.usage else 0,
-                "total_tokens": (
-                    (response.usage.input_tokens + response.usage.output_tokens)
-                    if response.usage else 0
-                ),
+                "total_tokens": ((response.usage.input_tokens + response.usage.output_tokens) if response.usage else 0),
             }
 
             cost = await self.estimate_cost(
@@ -170,13 +167,13 @@ class AnthropicProvider(BaseProvider):
             )
 
         except anthropic.AuthenticationError as e:
-            raise RuntimeError(f"Anthropic authentication failed: {e}")
+            raise RuntimeError(f"Anthropic authentication failed: {e}") from e
         except anthropic.RateLimitError as e:
-            raise RuntimeError(f"Anthropic rate limit exceeded: {e}")
+            raise RuntimeError(f"Anthropic rate limit exceeded: {e}") from e
         except anthropic.APIError as e:
-            raise RuntimeError(f"Anthropic API error: {e}")
+            raise RuntimeError(f"Anthropic API error: {e}") from e
         except Exception as e:
-            raise RuntimeError(f"Unexpected error calling Anthropic: {e}")
+            raise RuntimeError(f"Unexpected error calling Anthropic: {e}") from e
 
     async def health_check(self) -> bool:
         """Check if Anthropic API is accessible."""

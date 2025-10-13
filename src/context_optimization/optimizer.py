@@ -9,17 +9,15 @@ Hybrid compression system:
 Target: <100ms processing, >=90% quality, 20-40% token reduction
 """
 
-import time
-import hashlib
 import asyncio
-from typing import Optional, Tuple
+import hashlib
+import time
+
 import tiktoken
-from datetime import datetime
 
-from .models import OptimizationResult, FeedbackRecord
 from .config import ContextOptimizationConfig
-from .seraph_compression import SeraphCompressor, CompressionResult
-
+from .models import FeedbackRecord, OptimizationResult
+from .seraph_compression import CompressionResult, SeraphCompressor
 
 # Optimization prompt based on LLMLingua and 2025 research
 OPTIMIZATION_PROMPT = """You are an expert at compressing text while preserving all important information and meaning.
@@ -107,7 +105,7 @@ class ContextOptimizer:
             },
         }
 
-    async def optimize(self, content: str, timeout_ms: Optional[float] = None) -> OptimizationResult:
+    async def optimize(self, content: str, timeout_ms: float | None = None) -> OptimizationResult:
         """
         Optimize content using hybrid compression system.
 
@@ -151,24 +149,20 @@ class ContextOptimizer:
             # Route to appropriate compression method
             if method == "ai":
                 optimized_content, quality_score = await asyncio.wait_for(
-                    self._optimize_with_ai(content),
-                    timeout=timeout / 1000.0
+                    self._optimize_with_ai(content), timeout=timeout / 1000.0
                 )
             elif method == "seraph":
                 optimized_content, quality_score = await asyncio.wait_for(
-                    self._optimize_with_seraph(content),
-                    timeout=timeout / 1000.0
+                    self._optimize_with_seraph(content), timeout=timeout / 1000.0
                 )
             elif method == "hybrid":
                 optimized_content, quality_score = await asyncio.wait_for(
-                    self._optimize_hybrid(content),
-                    timeout=timeout / 1000.0
+                    self._optimize_hybrid(content), timeout=timeout / 1000.0
                 )
             else:
                 # Fallback to AI
                 optimized_content, quality_score = await asyncio.wait_for(
-                    self._optimize_with_ai(content),
-                    timeout=timeout / 1000.0
+                    self._optimize_with_ai(content), timeout=timeout / 1000.0
                 )
 
             # Count optimized tokens
@@ -193,8 +187,7 @@ class ContextOptimizer:
 
             # Calculate cost savings
             cost_savings_usd = await self._calculate_cost_savings(
-                tokens_saved,
-                getattr(self.provider, 'model_name', None)
+                tokens_saved, getattr(self.provider, "model_name", None)
             )
 
             # Create result
@@ -210,7 +203,7 @@ class ContextOptimizer:
                 method=method,
                 optimization_time_ms=optimization_time_ms,
                 cost_savings_usd=cost_savings_usd,
-                model_name=getattr(self.provider, 'model_name', None),
+                model_name=getattr(self.provider, "model_name", None),
                 rollback_occurred=rollback_occurred,
             )
 
@@ -255,7 +248,7 @@ class ContextOptimizer:
             print(f"Optimization error: {e}")
             return self._create_passthrough_result(content, start_time)
 
-    async def _optimize_with_ai(self, content: str) -> Tuple[str, float]:
+    async def _optimize_with_ai(self, content: str) -> tuple[str, float]:
         """
         Perform AI-powered optimization using provider.
 
@@ -274,10 +267,7 @@ class ContextOptimizer:
             compressed = await self._call_provider(optimization_prompt, max_tokens=len(content))
 
             # Step 2: Validate quality using AI
-            validation_prompt = VALIDATION_PROMPT.format(
-                original=content,
-                compressed=compressed
-            )
+            validation_prompt = VALIDATION_PROMPT.format(original=content, compressed=compressed)
 
             quality_response = await self._call_provider(validation_prompt, max_tokens=10)
 
@@ -342,7 +332,7 @@ class ContextOptimizer:
             # Unknown method - fallback based on provider availability
             return "seraph" if not has_provider else "ai"
 
-    async def _optimize_with_seraph(self, content: str) -> Tuple[str, float]:
+    async def _optimize_with_seraph(self, content: str) -> tuple[str, float]:
         """
         Perform deterministic multi-layer compression using Seraph.
 
@@ -397,7 +387,7 @@ class ContextOptimizer:
             # Fallback: return original with perfect quality
             return content, 1.0
 
-    async def _optimize_hybrid(self, content: str) -> Tuple[str, float]:
+    async def _optimize_hybrid(self, content: str) -> tuple[str, float]:
         """
         Hybrid compression: Seraph pre-compress + AI polish.
 
@@ -424,7 +414,6 @@ class ContextOptimizer:
                 polished, quality = await self._optimize_with_ai(seraph_compressed)
 
                 # Verify hybrid result is actually better than seraph alone
-                tokens_original = self._count_tokens(content)
                 tokens_hybrid = self._count_tokens(polished)
                 tokens_seraph = self._count_tokens(seraph_compressed)
 
@@ -450,18 +439,18 @@ class ContextOptimizer:
 
         try:
             # Use provider's generate method (adjust based on actual provider interface)
-            if hasattr(self.provider, 'generate'):
+            if hasattr(self.provider, "generate"):
                 response = await self.provider.generate(
                     prompt=prompt,
                     max_tokens=max_tokens,
                     temperature=0.3,  # Low temperature for consistent compression
                 )
-                return response.get('content', '') or response.get('text', '')
+                return response.get("content", "") or response.get("text", "")
             else:
                 # Fallback to chat-style interface
                 messages = [{"role": "user", "content": prompt}]
                 response = await self.provider.chat(messages=messages, max_tokens=max_tokens)
-                return response.get('content', '') or response.get('message', {}).get('content', '')
+                return response.get("content", "") or response.get("message", {}).get("content", "")
 
         except Exception as e:
             print(f"Provider call error: {e}")
@@ -480,7 +469,7 @@ class ContextOptimizer:
 
     def _hash_content(self, content: str) -> str:
         """Generate hash for content"""
-        return hashlib.sha256(content.encode('utf-8')).hexdigest()
+        return hashlib.sha256(content.encode("utf-8")).hexdigest()
 
     def _create_passthrough_result(self, content: str, start_time: float) -> OptimizationResult:
         """Create result for content that wasn't optimized"""
@@ -505,7 +494,7 @@ class ContextOptimizer:
         self.stats["total_optimizations"] += 1
 
         # Track method usage
-        method = getattr(result, 'method', 'ai')
+        method = getattr(result, "method", "ai")
         if method in self.stats["method_usage"]:
             self.stats["method_usage"][method] += 1
 
@@ -516,15 +505,11 @@ class ContextOptimizer:
             # Running average for quality
             n = self.stats["successful_optimizations"]
             current_avg_quality = self.stats["avg_quality_score"]
-            self.stats["avg_quality_score"] = (
-                (current_avg_quality * (n - 1) + result.quality_score) / n
-            )
+            self.stats["avg_quality_score"] = (current_avg_quality * (n - 1) + result.quality_score) / n
 
             # Running average for reduction
             current_avg_reduction = self.stats["avg_reduction_percentage"]
-            self.stats["avg_reduction_percentage"] = (
-                (current_avg_reduction * (n - 1) + result.reduction_percentage) / n
-            )
+            self.stats["avg_reduction_percentage"] = (current_avg_reduction * (n - 1) + result.reduction_percentage) / n
 
     async def _store_feedback(self, result: OptimizationResult):
         """Store feedback for adaptive learning (async)"""
@@ -532,7 +517,8 @@ class ContextOptimizer:
             # Calculate success score
             success_score = result.quality_score if result.validation_passed else 0.0
 
-            feedback = FeedbackRecord(
+            # Record feedback for future improvements
+            _feedback = FeedbackRecord(
                 record_id=f"opt_{int(time.time() * 1000)}",
                 content_hash=self._hash_content(result.original_content),
                 tokens_saved=result.tokens_saved,
@@ -553,7 +539,8 @@ class ContextOptimizer:
         """Get current optimization statistics"""
         success_rate = (
             self.stats["successful_optimizations"] / self.stats["total_optimizations"]
-            if self.stats["total_optimizations"] > 0 else 0.0
+            if self.stats["total_optimizations"] > 0
+            else 0.0
         )
 
         return {
@@ -567,7 +554,7 @@ class ContextOptimizer:
         self.cache.clear()
         self.seraph_cache.clear()
 
-    async def _calculate_cost_savings(self, tokens_saved: int, model_name: Optional[str]) -> float:
+    async def _calculate_cost_savings(self, tokens_saved: int, model_name: str | None) -> float:
         """
         Calculate cost savings from token reduction.
 
@@ -584,13 +571,13 @@ class ContextOptimizer:
         # Simple pricing lookup (can be enhanced with models.dev integration)
         # Average input token prices for common models (per 1M tokens)
         pricing = {
-            'gpt-4': 30.0,
-            'gpt-4-turbo': 10.0,
-            'gpt-3.5-turbo': 0.50,
-            'claude-3-opus': 15.0,
-            'claude-3-sonnet': 3.0,
-            'claude-3-haiku': 0.25,
-            'gemini-pro': 0.50,
+            "gpt-4": 30.0,
+            "gpt-4-turbo": 10.0,
+            "gpt-3.5-turbo": 0.50,
+            "claude-3-opus": 15.0,
+            "claude-3-sonnet": 3.0,
+            "claude-3-haiku": 0.25,
+            "gemini-pro": 0.50,
         }
 
         # Find best matching price
@@ -623,7 +610,7 @@ class ContextOptimizer:
                 metadata={
                     "reduction_percentage": result.reduction_percentage,
                     "quality_score": result.quality_score,
-                }
+                },
             )
         except ImportError:
             # Budget management not available
@@ -636,8 +623,8 @@ class ContextOptimizer:
 async def optimize_content(
     content: str,
     provider=None,
-    config: Optional[ContextOptimizationConfig] = None,
-    budget_tracker=None
+    config: ContextOptimizationConfig | None = None,
+    budget_tracker=None,
 ) -> OptimizationResult:
     """
     Optimize content with AI-powered compression.

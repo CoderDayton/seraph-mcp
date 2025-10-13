@@ -5,9 +5,9 @@ Tests the CostEstimator class with pricing database and cost calculations.
 Covers all major LLM providers and cost comparison features.
 """
 
-import pytest
-from datetime import datetime
 from unittest.mock import Mock, patch
+
+import pytest
 
 from src.token_optimization.cost_estimator import (
     CostEstimator,
@@ -464,9 +464,7 @@ class TestCostEstimator:
 
     def test_generate_recommendation_single_estimate(self, estimator):
         """Test recommendation generation with single estimate."""
-        estimates = [
-            {"model": "gpt-4", "total_cost_usd": 0.03}
-        ]
+        estimates = [{"model": "gpt-4", "total_cost_usd": 0.03}]
 
         recommendation = estimator._generate_recommendation(estimates)
 
@@ -619,10 +617,10 @@ class TestEdgeCases:
         )
 
         assert result["total_cost_usd"] > 0
-        assert isinstance(result["total_cost_usd"], (int, float))
+        assert isinstance(result["total_cost_usd"], int | float)
 
     def test_pricing_database_no_negative_prices(self, estimator):
         """Test that pricing database has no negative prices."""
-        for model, pricing in estimator.PRICING_DATABASE.items():
+        for _model, pricing in estimator.PRICING_DATABASE.items():
             assert pricing.input_price_per_1k >= 0
             assert pricing.output_price_per_1k >= 0

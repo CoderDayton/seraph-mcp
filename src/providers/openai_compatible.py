@@ -13,11 +13,12 @@ Per SDD.md:
 """
 
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 try:
     import openai
     from openai import AsyncOpenAI
+
     OPENAI_AVAILABLE = True
 except ImportError:
     OPENAI_AVAILABLE = False
@@ -32,54 +33,50 @@ from .base import (
 
 
 class OpenAICompatibleProvider(BaseProvider):
-"""
-OpenAI-compatible API provider implementation.
+    """
+    OpenAI-compatible API provider implementation.
 
-Works with any service that implements the OpenAI API specification,
-such as LM Studio, Ollama, vLLM, and others.
-"""
+    Works with any service that implements the OpenAI API specification,
+    such as LM Studio, Ollama, vLLM, and others.
+    """
 
-def __init__(self, config: ProviderConfig) -> None:
-    """Initialize OpenAI-compatible provider."""
-    super().__init__(config)
+    def __init__(self, config: ProviderConfig) -> None:
+        """Initialize OpenAI-compatible provider."""
+        super().__init__(config)
 
-    if not OPENAI_AVAILABLE:
-        raise RuntimeError(
-            "OpenAI SDK not available. Install with: pip install openai>=1.0.0"
-        )
+        if not OPENAI_AVAILABLE:
+            raise RuntimeError("OpenAI SDK not available. Install with: pip install openai>=1.0.0")
 
-    if not config.base_url:
-        raise ValueError(
-            "base_url is required for OpenAI-compatible provider. "
-            "Example: http://localhost:1234/v1"
-        )
+        if not config.base_url:
+            raise ValueError("base_url is required for OpenAI-compatible provider. Example: http://localhost:1234/v1")
 
-    # Initialize async client with custom base URL
-    client_kwargs: Dict[str, Any] = {
-        "api_key": config.api_key or "not-needed",  # Some services don't require API keys
-        "base_url": config.base_url,
-        "timeout": config.timeout,
-        "max_retries": config.max_retries,
-    }
+        # Initialize async client with custom base URL
+        client_kwargs: dict[str, Any] = {
+            "api_key": config.api_key or "not-needed",  # Some services don't require API keys
+            "base_url": config.base_url,
+            "timeout": config.timeout,
+            "max_retries": config.max_retries,
+        }
 
-    self.client = AsyncOpenAI(**client_kwargs)
-    self._models_cache: Optional[List[ModelInfo]] = None
+        self.client = AsyncOpenAI(**client_kwargs)
+        self._models_cache: list[ModelInfo] | None = None
 
-def _validate_config(self) -> None:
-    """Validate OpenAI-compatible provider configuration."""
-    if not self.config.base_url:
-        raise ValueError("base_url is required for OpenAI-compatible provider")
+    def _validate_config(self) -> None:
+        """Validate OpenAI-compatible provider configuration."""
+        if not self.config.base_url:
+            raise ValueError("base_url is required for OpenAI-compatible provider")
 
-    if not self.config.base_url.startswith(("http://", "https://")):
-        raise ValueError("base_url must start with http:// or https://")
+        if not self.config.base_url.startswith(("http://", "https://")):
+            raise ValueError("base_url must start with http:// or https://")
 
-@property
-def name(self) -> str:
-    """Return provider name."""
-    return "openai-compatible"
+    @property
+    def name(self) -> str:
+        """Return provider name."""
+        return "openai-compatible"
+
 
 @property
-def models_dev_provider_id(self) -> Optional[str]:
+def models_dev_provider_id(self) -> str | None:
     """
     Return Models.dev provider ID based on base_url.
 
@@ -89,12 +86,13 @@ def models_dev_provider_id(self) -> Optional[str]:
         return None
 
     # Store provider ID if we've already determined it
-    if hasattr(self, '_cached_provider_id'):
+    if hasattr(self, "_cached_provider_id"):
         return self._cached_provider_id
 
     return None
 
-async def _discover_provider_id(self) -> Optional[str]:
+
+async def _discover_provider_id(self) -> str | None:
     """
     Discover the Models.dev provider ID by matching base_url.
 
@@ -109,10 +107,10 @@ async def _discover_provider_id(self) -> Optional[str]:
         providers = await self._models_dev_client.load_providers()
 
         # Try to match base URL to a provider
-        base_url_lower = self.config.base_url.lower().rstrip('/')
+        base_url_lower = self.config.base_url.lower().rstrip("/")
 
         for provider_id, provider in providers.items():
-            provider_api = provider.api.lower().rstrip('/')
+            provider_api = provider.api.lower().rstrip("/")
 
             # Check if URLs match or are similar
             if base_url_lower == provider_api or base_url_lower in provider_api or provider_api in base_url_lower:
@@ -122,6 +120,7 @@ async def _discover_provider_id(self) -> Optional[str]:
         return None
     except Exception:
         return None
+
 
 async def _get_token_costs(self, model_id: str) -> tuple[float, float]:
     """
@@ -138,6 +137,7 @@ async def _get_token_costs(self, model_id: str) -> tuple[float, float]:
     # Fallback to zero costs if model info unavailable
     return (0.0, 0.0)
 
+
 async def complete(self, request: CompletionRequest) -> CompletionResponse:
     """Generate completion using OpenAI-compatible API."""
     if not self.config.enabled:
@@ -147,7 +147,7 @@ async def complete(self, request: CompletionRequest) -> CompletionResponse:
 
     try:
         # Prepare API request
-        api_params: Dict[str, Any] = {
+        api_params: dict[str, Any] = {
             "model": request.model,
             "messages": request.messages,
             "temperature": request.temperature,
@@ -198,15 +198,16 @@ async def complete(self, request: CompletionRequest) -> CompletionResponse:
         )
 
     except openai.AuthenticationError as e:
-        raise RuntimeError(f"Authentication failed: {e}")
+        raise RuntimeError(f"Authentication failed: {e}") from e
     except openai.APIConnectionError as e:
-        raise RuntimeError(f"Connection failed to {self.config.base_url}: {e}")
+        raise RuntimeError(f"Connection failed to {self.config.base_url}: {e}") from e
     except openai.APIError as e:
-        raise RuntimeError(f"API error: {e}")
+        raise RuntimeError(f"API error: {e}") from e
     except Exception as e:
-        raise RuntimeError(f"Unexpected error calling OpenAI-compatible API: {e}")
+        raise RuntimeError(f"Unexpected error calling OpenAI-compatible API: {e}") from e
 
-async def list_models(self) -> List[ModelInfo]:
+
+async def list_models(self) -> list[ModelInfo]:
     """
     List all available models from the OpenAI-compatible endpoint.
 
@@ -222,10 +223,7 @@ async def list_models(self) -> List[ModelInfo]:
         try:
             provider = await self._models_dev_client.get_provider(provider_id)
             if provider and provider.models:
-                models = [
-                    ModelInfo.from_models_dev(model_info)
-                    for model_info in provider.models.values()
-                ]
+                models = [ModelInfo.from_models_dev(model_info) for model_info in provider.models.values()]
                 self._models_cache = models
                 return models
         except Exception:
@@ -258,7 +256,8 @@ async def list_models(self) -> List[ModelInfo]:
         # If we can't fetch models, return empty list
         return []
 
-async def get_model_info(self, model_id: str) -> Optional[ModelInfo]:
+
+async def get_model_info(self, model_id: str) -> ModelInfo | None:
     """
     Get information about a specific model.
 
@@ -293,9 +292,8 @@ async def get_model_info(self, model_id: str) -> Optional[ModelInfo]:
         capabilities=["chat"],
     )
 
-async def estimate_cost(
-    self, model_id: str, input_tokens: int, output_tokens: int
-) -> float:
+
+async def estimate_cost(self, model_id: str, input_tokens: int, output_tokens: int) -> float:
     """
     Estimate cost for API call.
 
@@ -305,9 +303,7 @@ async def estimate_cost(
     provider_id = await self._discover_provider_id()
     if provider_id:
         try:
-            cost = await self._models_dev_client.estimate_cost(
-                provider_id, model_id, input_tokens, output_tokens
-            )
+            cost = await self._models_dev_client.estimate_cost(provider_id, model_id, input_tokens, output_tokens)
             if cost > 0:
                 return cost
         except Exception:
@@ -315,6 +311,7 @@ async def estimate_cost(
 
     # Fallback: assumes free for undetected providers
     return 0.0
+
 
 async def health_check(self) -> bool:
     """Check if the OpenAI-compatible API is accessible."""
@@ -324,6 +321,7 @@ async def health_check(self) -> bool:
         return True
     except Exception:
         return False
+
 
 async def close(self) -> None:
     """Clean up client resources."""

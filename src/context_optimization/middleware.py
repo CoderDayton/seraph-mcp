@@ -20,12 +20,11 @@ Usage:
     response = await optimized_provider.generate(prompt="Long prompt...")
 """
 
-import asyncio
-from typing import Any, Dict, List, Optional, Union
 import logging
+from typing import Any
 
-from .optimizer import ContextOptimizer
 from .config import ContextOptimizationConfig, load_config
+from .optimizer import ContextOptimizer
 
 logger = logging.getLogger(__name__)
 
@@ -41,9 +40,9 @@ class OptimizedProvider:
     def __init__(
         self,
         provider: Any,
-        optimizer: Optional[ContextOptimizer] = None,
-        config: Optional[ContextOptimizationConfig] = None,
-        budget_tracker: Optional[Any] = None,
+        optimizer: ContextOptimizer | None = None,
+        config: ContextOptimizationConfig | None = None,
+        budget_tracker: Any | None = None,
     ):
         """
         Initialize optimized provider wrapper.
@@ -64,11 +63,7 @@ class OptimizedProvider:
 
         # Create optimizer if not provided
         if optimizer is None:
-            optimizer = ContextOptimizer(
-                config=config,
-                provider=provider,
-                budget_tracker=budget_tracker
-            )
+            optimizer = ContextOptimizer(config=config, provider=provider, budget_tracker=budget_tracker)
         self.optimizer = optimizer
 
         # Track middleware stats
@@ -81,11 +76,11 @@ class OptimizedProvider:
 
     async def generate(
         self,
-        prompt: Optional[str] = None,
-        messages: Optional[List[Dict[str, str]]] = None,
+        prompt: str | None = None,
+        messages: list[dict[str, str]] | None = None,
         skip_optimization: bool = False,
-        **kwargs
-    ) -> Dict[str, Any]:
+        **kwargs,
+    ) -> dict[str, Any]:
         """
         Generate completion with automatic prompt optimization.
 
@@ -111,7 +106,7 @@ class OptimizedProvider:
                 prompt=optimized_prompt,
                 messages=None,
                 optimization_result=opt_result,
-                **kwargs
+                **kwargs,
             )
         elif messages:
             optimized_messages, opt_result = await self._optimize_messages(messages)
@@ -119,18 +114,13 @@ class OptimizedProvider:
                 prompt=None,
                 messages=optimized_messages,
                 optimization_result=opt_result,
-                **kwargs
+                **kwargs,
             )
         else:
             # No prompt or messages - pass through
             return await self._call_provider(prompt=prompt, messages=messages, **kwargs)
 
-    async def chat(
-        self,
-        messages: List[Dict[str, str]],
-        skip_optimization: bool = False,
-        **kwargs
-    ) -> Dict[str, Any]:
+    async def chat(self, messages: list[dict[str, str]], skip_optimization: bool = False, **kwargs) -> dict[str, Any]:
         """
         Chat completion with automatic message optimization.
 
@@ -142,13 +132,9 @@ class OptimizedProvider:
         Returns:
             Provider response with optimization metadata
         """
-        return await self.generate(
-            messages=messages,
-            skip_optimization=skip_optimization,
-            **kwargs
-        )
+        return await self.generate(messages=messages, skip_optimization=skip_optimization, **kwargs)
 
-    async def _optimize_prompt(self, prompt: str) -> tuple[str, Optional[Any]]:
+    async def _optimize_prompt(self, prompt: str) -> tuple[str, Any | None]:
         """
         Optimize a single prompt string.
 
@@ -176,10 +162,7 @@ class OptimizedProvider:
             logger.error(f"Optimization error, using original prompt: {e}")
             return prompt, None
 
-    async def _optimize_messages(
-        self,
-        messages: List[Dict[str, str]]
-    ) -> tuple[List[Dict[str, str]], Optional[Any]]:
+    async def _optimize_messages(self, messages: list[dict[str, str]]) -> tuple[list[dict[str, str]], Any | None]:
         """
         Optimize chat messages (typically the last user message).
 
@@ -213,7 +196,7 @@ class OptimizedProvider:
             # Update message with optimized content
             optimized_messages[last_user_idx] = {
                 **messages[last_user_idx],
-                "content": result.optimized_content
+                "content": result.optimized_content,
             }
 
             # Update middleware stats
@@ -236,11 +219,11 @@ class OptimizedProvider:
 
     async def _call_provider(
         self,
-        prompt: Optional[str] = None,
-        messages: Optional[List[Dict[str, str]]] = None,
-        optimization_result: Optional[Any] = None,
-        **kwargs
-    ) -> Dict[str, Any]:
+        prompt: str | None = None,
+        messages: list[dict[str, str]] | None = None,
+        optimization_result: Any | None = None,
+        **kwargs,
+    ) -> dict[str, Any]:
         """
         Call the underlying provider with optimized content.
 
@@ -249,15 +232,11 @@ class OptimizedProvider:
         """
         try:
             # Call provider based on its interface
-            if hasattr(self.provider, 'generate'):
-                response = await self.provider.generate(
-                    prompt=prompt,
-                    messages=messages,
-                    **kwargs
-                )
-            elif hasattr(self.provider, 'chat') and messages:
+            if hasattr(self.provider, "generate"):
+                response = await self.provider.generate(prompt=prompt, messages=messages, **kwargs)
+            elif hasattr(self.provider, "chat") and messages:
                 response = await self.provider.chat(messages=messages, **kwargs)
-            elif hasattr(self.provider, 'complete') and prompt:
+            elif hasattr(self.provider, "complete") and prompt:
                 response = await self.provider.complete(prompt=prompt, **kwargs)
             else:
                 raise ValueError("Provider does not have a supported interface")
@@ -279,7 +258,7 @@ class OptimizedProvider:
             logger.error(f"Provider call error: {e}")
             raise
 
-    def get_stats(self) -> Dict[str, Any]:
+    def get_stats(self) -> dict[str, Any]:
         """
         Get middleware statistics including base optimizer stats.
 
@@ -293,8 +272,9 @@ class OptimizedProvider:
             "optimizer": optimizer_stats,
             "optimization_rate": (
                 self.middleware_stats["optimized_calls"] / self.middleware_stats["total_calls"]
-                if self.middleware_stats["total_calls"] > 0 else 0.0
-            )
+                if self.middleware_stats["total_calls"] > 0
+                else 0.0
+            ),
         }
 
     def reset_stats(self):
@@ -314,8 +294,8 @@ class OptimizedProvider:
 
 def wrap_provider(
     provider: Any,
-    config: Optional[ContextOptimizationConfig] = None,
-    budget_tracker: Optional[Any] = None,
+    config: ContextOptimizationConfig | None = None,
+    budget_tracker: Any | None = None,
 ) -> OptimizedProvider:
     """
     Convenience function to wrap a provider with optimization middleware.
