@@ -1,0 +1,61 @@
+# Optional Redis Server for Seraph MCP
+#
+# This docker-compose provides a local Redis server for development/testing.
+# The Seraph MCP server itself runs via `fastmcp dev` or `fastmcp run` on your host.
+#
+# Usage:
+#   1. Start Redis:     docker-compose up -d
+#   2. Stop Redis:      docker-compose down
+#   3. Stop & clean:    docker-compose down -v
+#
+# Then configure Seraph MCP to use Redis:
+#   - Set REDIS_URL=redis://localhost:6379/0
+#   - Set CACHE_BACKEND=redis (optional, auto-detected from REDIS_URL)
+#
+# Access RedisInsight UI at http://localhost:8001 for Redis management.
+
+version: "3.8"
+
+services:
+    # Redis server with RedisStack (includes modules like RedisJSON, RediSearch)
+    redis:
+        image: redis/redis-stack-server:latest
+        container_name: seraph-redis
+        ports:
+            - "6379:6379"
+        volumes:
+            - redis_data:/data
+        restart: unless-stopped
+        healthcheck:
+            test: ["CMD", "redis-cli", "ping"]
+            interval: 10s
+            timeout: 5s
+            retries: 5
+            start_period: 30s
+        environment:
+            # Optional: Set Redis password
+            # - REDIS_ARGS=--requirepass yourpassword
+            # Optional: Configure memory limits
+            - REDIS_ARGS=--maxmemory 512mb --maxmemory-policy allkeys-lru
+
+    # RedisInsight - Web UI for Redis management (optional)
+    # Access at http://localhost:8001
+    redisinsight:
+        image: redis/redisinsight:latest
+        container_name: seraph-redisinsight
+        ports:
+            - "8001:8001"
+        depends_on:
+            - redis
+        restart: unless-stopped
+        environment:
+            - REDIS_HOST=redis
+            - REDIS_PORT=6379
+
+volumes:
+    redis_data:
+        driver: local
+
+networks:
+    default:
+        name: seraph-redis-network

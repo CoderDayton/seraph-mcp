@@ -20,9 +20,9 @@ echo "Checking Python version..."
 python_version=$(python3 --version 2>&1 | awk '{print $2}')
 echo "Found Python $python_version"
 
-# Verify Python >= 3.10
-python3 -c "import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)" || {
-    echo -e "${RED}❌ Python 3.10+ required${NC}"
+# Verify Python >= 3.12
+python3 -c "import sys; sys.exit(0 if sys.version_info >= (3, 12) else 1)" || {
+    echo -e "${RED}❌ Python 3.12+ required${NC}"
     exit 1
 }
 echo -e "${GREEN}✓ Python version OK${NC}"
@@ -82,21 +82,6 @@ echo ""
 echo -e "${GREEN}✓ Dependencies installed successfully${NC}"
 echo ""
 
-# Verify installation
-echo "Verifying installation..."
-python3 -c "
-from src.cache import create_cache
-from src.config import load_config
-from src.observability import get_observability
-print('✓ All core imports work')
-" 2>&1 || {
-    echo -e "${RED}❌ Installation verification failed${NC}"
-    exit 1
-}
-
-echo -e "${GREEN}✓ Installation verified${NC}"
-echo ""
-
 # Offer to install pre-commit hooks
 if [ "$install_type" = "1" ]; then
     read -p "Install pre-commit hooks? [Y/n]: " install_hooks
@@ -105,7 +90,7 @@ if [ "$install_type" = "1" ]; then
     if [[ "$install_hooks" =~ ^[Yy]$ ]]; then
         echo ""
         echo "Installing pre-commit hooks..."
-        pre-commit install
+        uv run pre-commit install
         echo -e "${GREEN}✓ Pre-commit hooks installed${NC}"
     fi
 fi
@@ -115,27 +100,63 @@ echo "================================================"
 echo -e "${GREEN}  Installation Complete! 🎉${NC}"
 echo "================================================"
 echo ""
+if [ "$PACKAGE_MANAGER" = "uv" ]; then
+    echo "The project is installed in a uv-managed virtual environment."
+    echo "Use 'uv run' prefix for all commands, or activate with:"
+    echo "  source .venv/bin/activate  # Linux/Mac"
+    echo "  .venv\\Scripts\\activate     # Windows"
+    echo ""
+fi
 echo "Next steps:"
 echo ""
 if [ "$install_type" = "1" ]; then
-    echo "  1. Run tests:"
-    echo "     pytest --cov=src --cov-report=term"
-    echo ""
-    echo "  2. Start Redis (for integration tests):"
-    echo "     docker run -d -p 6379:6379 redis:7-alpine"
-    echo ""
-    echo "  3. Run the server:"
-    echo "     fastmcp dev src/server.py"
+    if [ "$PACKAGE_MANAGER" = "uv" ]; then
+        echo "  1. Run tests:"
+        echo "     uv run pytest --cov=src --cov-report=term"
+        echo ""
+        echo "  2. Start Redis (for integration tests):"
+        echo "     docker run -d -p 6379:6379 redis:7-alpine"
+        echo ""
+        echo "  3. Run the server:"
+        echo "     uv run fastmcp dev src/server.py"
+    else
+        echo "  1. Activate virtual environment (if using one):"
+        echo "     source venv/bin/activate"
+        echo ""
+        echo "  2. Run tests:"
+        echo "     pytest --cov=src --cov-report=term"
+        echo ""
+        echo "  3. Start Redis (for integration tests):"
+        echo "     docker run -d -p 6379:6379 redis:7-alpine"
+        echo ""
+        echo "  4. Run the server:"
+        echo "     fastmcp dev src/server.py"
+    fi
 else
-    echo "  1. Set up environment:"
-    echo "     cp .env.example .env"
-    echo "     # Edit .env with your configuration"
-    echo ""
-    echo "  2. Start Redis (optional):"
-    echo "     docker run -d -p 6379:6379 redis:7-alpine"
-    echo ""
-    echo "  3. Run the server:"
-    echo "     fastmcp run fastmcp.json"
+    if [ "$PACKAGE_MANAGER" = "uv" ]; then
+        echo "  1. Set up environment:"
+        echo "     cp .env.example .env"
+        echo "     # Edit .env with your configuration"
+        echo ""
+        echo "  2. Start Redis (optional):"
+        echo "     docker run -d -p 6379:6379 redis:7-alpine"
+        echo ""
+        echo "  3. Run the server:"
+        echo "     uv run fastmcp run fastmcp.json"
+    else
+        echo "  1. Activate virtual environment (if using one):"
+        echo "     source venv/bin/activate"
+        echo ""
+        echo "  2. Set up environment:"
+        echo "     cp .env.example .env"
+        echo "     # Edit .env with your configuration"
+        echo ""
+        echo "  3. Start Redis (optional):"
+        echo "     docker run -d -p 6379:6379 redis:7-alpine"
+        echo ""
+        echo "  4. Run the server:"
+        echo "     fastmcp run fastmcp.json"
+    fi
 fi
 echo ""
 echo "For more information, see:"

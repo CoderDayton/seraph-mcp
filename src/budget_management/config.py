@@ -12,7 +12,7 @@ Per SDD.md:
 
 from enum import Enum
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class EnforcementMode(str, Enum):
@@ -101,5 +101,4 @@ class BudgetConfig(BaseModel):
             pass
         return v
 
-    class Config:
-        use_enum_values = True
+    model_config = ConfigDict(use_enum_values=True)

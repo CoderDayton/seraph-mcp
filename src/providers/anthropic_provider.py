@@ -21,6 +21,8 @@ try:
 
     ANTHROPIC_AVAILABLE = True
 except ImportError:
+    anthropic = None  # type: ignore[assignment]
+    AsyncAnthropic = None  # type: ignore[assignment, misc]
     ANTHROPIC_AVAILABLE = False
 
 from .base import (
@@ -38,7 +40,7 @@ class AnthropicProvider(BaseProvider):
         """Initialize Anthropic provider."""
         super().__init__(config)
 
-        if not ANTHROPIC_AVAILABLE:
+        if not ANTHROPIC_AVAILABLE or AsyncAnthropic is None:
             raise RuntimeError("Anthropic SDK not available. Install with: pip install anthropic>=0.25.0")
 
         # Initialize async client
@@ -125,8 +127,9 @@ class AnthropicProvider(BaseProvider):
                 api_params["system"] = system_message
 
             # Add any extra provider-specific parameters
-            if hasattr(request, "extra") and request.extra:
-                api_params.update(request.extra)
+            extra = getattr(request, "extra", None)
+            if extra and isinstance(extra, dict):
+                api_params.update(extra)
 
             # Make API call
             response = await self.client.messages.create(**api_params)
@@ -166,26 +169,26 @@ class AnthropicProvider(BaseProvider):
                 cost_usd=cost,
             )
 
-        except anthropic.AuthenticationError as e:
-            raise RuntimeError(f"Anthropic authentication failed: {e}") from e
-        except anthropic.RateLimitError as e:
-            raise RuntimeError(f"Anthropic rate limit exceeded: {e}") from e
-        except anthropic.APIError as e:
-            raise RuntimeError(f"Anthropic API error: {e}") from e
         except Exception as e:
+            if anthropic is not None:
+                if isinstance(e, anthropic.AuthenticationError):
+                    raise RuntimeError(f"Anthropic authentication failed: {e}") from e
+                elif isinstance(e, anthropic.RateLimitError):
+                    raise RuntimeError(f"Anthropic rate limit exceeded: {e}") from e
+                elif isinstance(e, anthropic.APIError):
+                    raise RuntimeError(f"Anthropic API error: {e}") from e
             raise RuntimeError(f"Unexpected error calling Anthropic: {e}") from e
 
     async def health_check(self) -> bool:
         """Check if Anthropic API is accessible."""
         try:
-            # Try a minimal API call as health check
             # Use a very short max_tokens to minimize cost
-            response = await self.client.messages.create(
+            await self.client.messages.create(
                 model="claude-3-haiku-20240307",
-                messages=[{"role": "user", "content": "Hi"}],
-                max_tokens=1,
+                max_tokens=10,
+                messages=[{"role": "user", "content": "ping"}],
             )
-            return response is not None
+            return True
         except Exception:
             return False
 

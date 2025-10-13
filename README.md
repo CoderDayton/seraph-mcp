@@ -27,22 +27,34 @@ Zero configuration required. Features auto-enable based on what you configure.
 - **40-60% Cost Reduction** — Through intelligent optimization and compression
 - **>90% Quality Preservation** — Multi-dimensional validation with automatic rollback
 - **Sub-100ms Processing** — Minimal latency impact on requests
-- **18+ Tools** — Comprehensive optimization, budgeting, caching, and analytics
+- **22+ Tools** — Comprehensive optimization, budgeting, caching, and analytics
 - **Production Ready** — Full monitoring, budget enforcement, and error handling
 
 ---
 
 ## Install
 
-### Three Usage Modes
+### Quick Start
+
+Install from PyPI:
+```bash
+pip install seraph-mcp
+```
+
+Or run directly without installing:
+```bash
+uvx seraph-mcp
+```
+
+### Claude Desktop Integration
 
 #### Zero Config (Works Immediately)
 ```json
 {
   "mcpServers": {
     "seraph": {
-      "command": "npx",
-      "args": ["-y", "seraph-mcp"],
+      "command": "uvx",
+      "args": ["seraph-mcp"],
       "env": {}
     }
   }
@@ -55,8 +67,8 @@ Zero configuration required. Features auto-enable based on what you configure.
 {
   "mcpServers": {
     "seraph": {
-      "command": "npx",
-      "args": ["-y", "seraph-mcp"],
+      "command": "uvx",
+      "args": ["seraph-mcp"],
       "env": {
         "OPENAI_API_KEY": "sk-...",
         "OPENAI_MODEL": "gpt-4",
@@ -73,12 +85,12 @@ Zero configuration required. Features auto-enable based on what you configure.
 {
   "mcpServers": {
     "seraph": {
-      "command": "npx",
-      "args": ["-y", "seraph-mcp"],
+      "command": "uvx",
+      "args": ["seraph-mcp"],
       "env": {
         "OPENAI_API_KEY": "sk-...",
         "OPENAI_MODEL": "gpt-4",
-        "REDIS_URL": "redis://localhost:6379",
+        "REDIS_URL": "redis://localhost:6379/0",
         "DAILY_BUDGET_LIMIT": "10.0",
         "MONTHLY_BUDGET_LIMIT": "200.0"
       }
@@ -158,33 +170,37 @@ Hybrid compression with automatic method selection:
 
 ## Tools
 
-### Context Optimization
-- `optimize_context()` — Compress content with quality preservation
+### Core System (7 tools)
+- `check_status()` — System health and status overview
+- `get_cache_stats()` — Detailed cache performance metrics
+- `cache_get()` — Retrieve values from cache
+- `cache_set()` — Store values in cache with TTL
+- `cache_delete()` — Delete specific cache keys
+- `cache_clear()` — Clear entire cache
+- `get_metrics()` — Observability metrics snapshot
+
+### Token & Context Optimization (5 tools)
+- `optimize_tokens()` — Multi-strategy token reduction
+- `count_tokens()` — Accurate token counting per model
+- `estimate_cost()` — LLM API cost prediction
+- `analyze_token_efficiency()` — Optimization opportunity analysis
+- `optimize_context()` — AI/Seraph hybrid compression
+
+### Budget Management (3 tools)
+- `check_budget()` — Current spending status and limits
+- `get_usage_report()` — Detailed cost analytics by period
+- `forecast_spending()` — Predictive spending analysis
+
+### Semantic Cache (5 tools)
+- `lookup_semantic_cache()` — Find similar cached content
+- `store_in_semantic_cache()` — Cache with semantic indexing
+- `search_semantic_cache()` — Multi-result similarity search
+- `get_semantic_cache_stats()` — Cache performance metrics
+- `clear_semantic_cache()` — Maintenance operations
+
+### Context Optimization Settings (2 tools)
 - `get_optimization_settings()` — View current configuration
-- `get_optimization_stats()` — Performance metrics
-
-### Budget Management
-- `check_budget()` — Current spending and limits
-- `set_budget()` — Configure spending limits
-- `get_usage_report()` — Detailed cost analytics
-- `forecast_spending()` — Predict future costs
-
-### Semantic Cache
-- `lookup_cache()` — Find similar cached content
-- `store_in_cache()` — Cache with metadata
-- `analyze_cache_performance()` — Hit rates and metrics
-- `clear_cache()` — Maintenance operations
-
-### Model Intelligence
-- `find_best_model()` — Optimal model recommendations
-- `compare_model_costs()` — Cross-provider pricing
-- `estimate_request_cost()` — Cost prediction
-- `get_model_recommendations()` — AI-powered selection
-
-### System
-- `check_status()` — System health overview
-- `get_performance_metrics()` — Real-time metrics
-- `run_health_check()` — Comprehensive diagnostics
+- `get_optimization_stats()` — Performance and savings metrics
 
 ---
 
@@ -233,19 +249,61 @@ No provider? → Use Seraph-only (works without AI)
 
 ```bash
 # Clone
-git clone https://github.com/yourusername/seraph-mcp.git
+git clone https://github.com/coderdayton/seraph-mcp.git
 cd seraph-mcp
 
-# Install
+# Install dependencies
 pip install uv
 uv sync
 
-# Test
+# Run tests
 uv run pytest
 
-# Run
+# Run in development mode
 fastmcp dev src/server.py
+
+# Or use the CLI entry point
+uv run seraph-mcp
 ```
+
+### Optional: Local Redis Setup
+
+By default, Seraph MCP uses an in-memory cache. For persistent caching, you can optionally run a local Redis server:
+
+```bash
+# Start Redis (from project root or docker/ directory)
+docker-compose -f docker/docker-compose.yml up -d
+
+# Configure Seraph MCP to use Redis
+export REDIS_URL=redis://localhost:6379/0
+
+# Redis is now available at localhost:6379
+# RedisInsight web UI at http://localhost:8001
+
+# Stop Redis when done
+docker-compose -f docker/docker-compose.yml down
+```
+
+**See [`docker/README.md`](docker/README.md) for:**
+- Complete Docker setup instructions
+- Development vs production configurations
+- Troubleshooting and advanced options
+
+---
+
+## Publishing
+
+To publish to PyPI:
+
+```bash
+# Build package
+uv build
+
+# Publish (requires PyPI token)
+uv publish
+```
+
+See [docs/publishing/PUBLISH_TO_PYPI.md](docs/publishing/PUBLISH_TO_PYPI.md) for detailed instructions.
 
 ---
 

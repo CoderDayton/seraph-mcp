@@ -20,6 +20,8 @@ try:
 
     GEMINI_AVAILABLE = True
 except ImportError:
+    genai = None  # type: ignore[assignment]
+    GenerateContentConfig = None  # type: ignore[assignment, misc]
     GEMINI_AVAILABLE = False
 
 from .base import (
@@ -37,7 +39,7 @@ class GeminiProvider(BaseProvider):
         """Initialize Gemini provider."""
         super().__init__(config)
 
-        if not GEMINI_AVAILABLE:
+        if not GEMINI_AVAILABLE or genai is None:
             raise RuntimeError("Google Gemini SDK not available. Install with: pip install google-genai>=0.2.0")
 
         # Create async client
@@ -105,6 +107,8 @@ class GeminiProvider(BaseProvider):
             system_instruction, converted_messages = self._convert_messages_to_gemini_format(request.messages)
 
             # Prepare generation config
+            if GenerateContentConfig is None:
+                raise RuntimeError("GenerateContentConfig not available")
             config = GenerateContentConfig(
                 temperature=request.temperature,
                 max_output_tokens=request.max_tokens or 8192,
@@ -133,8 +137,8 @@ class GeminiProvider(BaseProvider):
 
             # Estimate tokens (Gemini doesn't always provide exact counts)
             prompt_text = " ".join([msg.get("content", "") for msg in request.messages])
-            prompt_tokens = self._estimate_tokens(prompt_text)
-            completion_tokens = self._estimate_tokens(content)
+            prompt_tokens = self._estimate_tokens(prompt_text) if prompt_text else 0
+            completion_tokens = self._estimate_tokens(content) if content else 0
 
             usage = {
                 "prompt_tokens": prompt_tokens,
@@ -146,7 +150,11 @@ class GeminiProvider(BaseProvider):
             finish_reason = "stop"
             if hasattr(response, "candidates") and response.candidates:
                 candidate = response.candidates[0]
-                if hasattr(candidate, "finish_reason"):
+                if (
+                    hasattr(candidate, "finish_reason")
+                    and candidate.finish_reason is not None
+                    and hasattr(candidate.finish_reason, "name")
+                ):
                     finish_reason = str(candidate.finish_reason.name).lower()
 
             cost = await self.estimate_cost(
@@ -158,7 +166,7 @@ class GeminiProvider(BaseProvider):
             latency_ms = (time.time() - start_time) * 1000
 
             return CompletionResponse(
-                content=content,
+                content=content or "",
                 model=request.model,
                 usage=usage,
                 finish_reason=finish_reason,
@@ -173,14 +181,16 @@ class GeminiProvider(BaseProvider):
     async def health_check(self) -> bool:
         """Check if Gemini API is accessible."""
         try:
+            if GenerateContentConfig is None:
+                return False
             # Try a minimal generation
             config = GenerateContentConfig(max_output_tokens=1)
-            response = await self.client.aio.models.generate_content(
+            await self.client.aio.models.generate_content(
                 model="gemini-pro",
                 contents="Hi",
                 config=config,
             )
-            return response is not None
+            return True
         except Exception:
             return False
 

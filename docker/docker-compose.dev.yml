@@ -1,0 +1,44 @@
+# Optional Redis Server for Seraph MCP (Development)
+#
+# Simplified development Redis setup with RedisStack.
+# The Seraph MCP server runs via `fastmcp dev` on your host.
+#
+# Usage:
+#   1. Start Redis:     docker-compose -f docker-compose.dev.yml up -d
+#   2. Stop Redis:      docker-compose -f docker-compose.dev.yml down
+#   3. Stop & clean:    docker-compose -f docker-compose.dev.yml down -v
+#
+# Then configure Seraph MCP:
+#   - Set REDIS_URL=redis://localhost:6379/0
+#
+# RedisInsight UI available at http://localhost:8001
+
+version: "3.8"
+
+services:
+    # Redis server with RedisStack (includes JSON, Search, etc.)
+    redis:
+        image: redis/redis-stack:latest
+        container_name: seraph-redis-dev
+        ports:
+            - "6379:6379" # Redis server
+            - "8001:8001" # RedisInsight UI
+        volumes:
+            - redis_dev_data:/data
+        restart: unless-stopped
+        healthcheck:
+            test: ["CMD", "redis-cli", "ping"]
+            interval: 10s
+            timeout: 5s
+            retries: 5
+        environment:
+            # Development: no password, generous memory
+            - REDIS_ARGS=--maxmemory 1gb --maxmemory-policy allkeys-lru
+
+volumes:
+    redis_dev_data:
+        driver: local
+
+networks:
+    default:
+        name: seraph-redis-dev-network

@@ -6,7 +6,7 @@ Thank you for your interest in contributing to Seraph MCP! This guide will help 
 
 ### Prerequisites
 
-- Python 3.10 or higher
+- Python 3.12 or higher
 - [uv](https://github.com/astral-sh/uv) package manager
 - Git
 

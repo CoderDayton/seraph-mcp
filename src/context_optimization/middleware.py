@@ -79,7 +79,7 @@ class OptimizedProvider:
         prompt: str | None = None,
         messages: list[dict[str, str]] | None = None,
         skip_optimization: bool = False,
-        **kwargs,
+        **kwargs: Any,
     ) -> dict[str, Any]:
         """
         Generate completion with automatic prompt optimization.
@@ -120,7 +120,9 @@ class OptimizedProvider:
             # No prompt or messages - pass through
             return await self._call_provider(prompt=prompt, messages=messages, **kwargs)
 
-    async def chat(self, messages: list[dict[str, str]], skip_optimization: bool = False, **kwargs) -> dict[str, Any]:
+    async def chat(
+        self, messages: list[dict[str, str]], skip_optimization: bool = False, **kwargs: Any
+    ) -> dict[str, Any]:
         """
         Chat completion with automatic message optimization.
 
@@ -222,7 +224,7 @@ class OptimizedProvider:
         prompt: str | None = None,
         messages: list[dict[str, str]] | None = None,
         optimization_result: Any | None = None,
-        **kwargs,
+        **kwargs: Any,
     ) -> dict[str, Any]:
         """
         Call the underlying provider with optimized content.

@@ -17,11 +17,13 @@ import time
 from typing import Any
 
 try:
-    import chromadb
-    from chromadb.config import Settings
+    import chromadb  # type: ignore[import-untyped]
+    from chromadb.config import Settings  # type: ignore[import-untyped]
 
     CHROMADB_AVAILABLE = True
 except ImportError:
+    chromadb = None  # type: ignore[assignment]
+    Settings = None  # type: ignore[assignment, misc]
     CHROMADB_AVAILABLE = False
 
 from ..providers import ProviderConfig
@@ -45,19 +47,21 @@ class SemanticCache:
         Args:
             config: Semantic cache configuration
         """
-        if not CHROMADB_AVAILABLE:
+        if not CHROMADB_AVAILABLE or chromadb is None or Settings is None:
             raise RuntimeError("chromadb not installed. Install with: pip install chromadb>=0.4.0")
 
         self.config = config
         self._embedding_generator: EmbeddingGenerator | None = None
-        self._client = None
-        self._collection = None
+        self._client: Any = None
+        self._collection: Any = None
 
         self._initialize()
 
     def _initialize(self) -> None:
         """Initialize ChromaDB and embedding generator."""
         # Initialize ChromaDB
+        if chromadb is None or Settings is None:
+            raise RuntimeError("chromadb not initialized")
         logger.info(f"Initializing ChromaDB at {self.config.persist_directory}")
         self._client = chromadb.PersistentClient(
             path=self.config.persist_directory,
@@ -82,6 +86,7 @@ class SemanticCache:
                     api_key=self.config.embedding_api_key or "",
                     base_url=self.config.embedding_base_url,
                     timeout=30.0,
+                    max_retries=3,
                     enabled=True,
                 )
 
@@ -236,7 +241,9 @@ class SemanticCache:
             generator = self._get_embedding_generator()
             embedding = await generator.generate(query)
 
-            # Search
+            # Query ChromaDB
+            if self._collection is None:
+                raise RuntimeError("Collection not initialized")
             results = self._collection.query(
                 query_embeddings=[embedding],
                 n_results=limit,
@@ -245,14 +252,14 @@ class SemanticCache:
             # Format results
             entries = []
             if results["ids"] and results["ids"][0]:
-                for i, entry_id in enumerate(results["ids"][0]):
-                    distance = results["distances"][0][i]
+                for i, cache_id in enumerate(results.get("ids", [[]])[0]):
+                    distance = results.get("distances", [[]])[0][i]
                     similarity = 1 - distance
 
                     if similarity >= threshold:
                         entries.append(
                             {
-                                "id": entry_id,
+                                "id": cache_id,
                                 "value": results["documents"][0][i],
                                 "metadata": results["metadatas"][0][i],
                                 "similarity": similarity,
@@ -277,6 +284,9 @@ class SemanticCache:
         """
         try:
             # Delete and recreate collection
+            # Clear ChromaDB collection
+            if self._client is None:
+                raise RuntimeError("Client not initialized")
             self._client.delete_collection(name=self.config.collection_name)
             self._collection = self._client.get_or_create_collection(
                 name=self.config.collection_name,
@@ -295,21 +305,19 @@ class SemanticCache:
         Returns:
             Dictionary with cache stats
         """
-        try:
-            count = self._collection.count()
+        if self._collection is None:
+            raise RuntimeError("Collection not initialized")
+        count = self._collection.count()
 
-            return {
-                "enabled": self.config.enabled,
-                "total_entries": count,
-                "collection_name": self.config.collection_name,
-                "embedding_provider": self.config.embedding_provider,
-                "embedding_model": self.config.embedding_model,
-                "similarity_threshold": self.config.similarity_threshold,
-                "max_cache_entries": self.config.max_cache_entries,
-            }
-        except Exception as e:
-            logger.error(f"Error getting cache stats: {e}")
-            return {"error": str(e)}
+        return {
+            "enabled": self.config.enabled,
+            "total_entries": count,
+            "collection_name": self.config.collection_name,
+            "embedding_provider": self.config.embedding_provider,
+            "embedding_model": self.config.embedding_model,
+            "similarity_threshold": self.config.similarity_threshold,
+            "max_cache_entries": self.config.max_cache_entries,
+        }
 
     async def close(self) -> None:
         """Clean up resources."""

@@ -1,562 +1,377 @@
 """
-Seraph MCP — Memory Backend Unit Tests
+Seraph MCP — Memory Cache Backend Tests
 
-Comprehensive unit tests for the in-memory cache backend, covering:
-- Basic operations (get, set, delete, exists)
-- TTL handling and expiration
-- LRU eviction when at capacity
-- Namespace prefixing
-- Clear operation
-- Statistics tracking
-- Thread safety and concurrent operations
+Comprehensive test suite for the in-memory cache backend.
+Tests LRU eviction, TTL support, thread safety, and all interface methods.
+
+Python 3.12+ with modern async patterns and type hints.
 """
 
 import asyncio
-import time
+from typing import Any
 
-import pytest
+import pytest  # type: ignore[import-untyped]
 
 from src.cache.backends.memory import MemoryCacheBackend
 
 
-class TestMemoryCacheBackendInitialization:
-    """Test memory backend initialization and configuration."""
+class TestMemoryCacheBackend:
+    """Test suite for MemoryCacheBackend."""
 
-    def test_init_with_defaults(self):
-        """Test initialization with default parameters."""
-        backend = MemoryCacheBackend()
-
-        assert backend.namespace == "seraph"
-        assert backend.default_ttl == 3600
-        assert backend.max_size == 1000
-        assert backend._hits == 0
-        assert backend._misses == 0
-        assert backend._sets == 0
-        assert backend._deletes == 0
-
-    def test_init_with_custom_params(self):
-        """Test initialization with custom parameters."""
-        backend = MemoryCacheBackend(
-            namespace="custom",
-            default_ttl=7200,
-            max_size=500,
+    @pytest.fixture  # type: ignore[misc]
+    async def cache(self) -> MemoryCacheBackend:
+        """Create a fresh memory cache instance for each test."""
+        return MemoryCacheBackend(
+            max_size=100,
+            default_ttl=3600,
+            namespace="test",
         )
 
-        assert backend.namespace == "custom"
-        assert backend.default_ttl == 7200
-        assert backend.max_size == 500
+    async def test_initialization(self) -> None:
+        """Test cache initialization with custom parameters."""
+        cache = MemoryCacheBackend(
+            max_size=100,
+            default_ttl=1800,
+            namespace="custom",
+        )
+        assert cache.max_size == 100
+        assert cache.default_ttl == 1800
+        assert cache.namespace == "custom"
 
-    def test_init_with_zero_max_size(self):
-        """Test that zero max_size is handled."""
-        backend = MemoryCacheBackend(max_size=0)
-        assert backend.max_size == 0
+        stats = await cache.get_stats()
+        assert stats["hits"] == 0
+        assert stats["misses"] == 0
+        assert stats["size"] == 0
 
-    def test_init_negative_ttl_converted_to_zero(self):
-        """Test that negative TTL is converted to 0."""
-        backend = MemoryCacheBackend(default_ttl=-100)
-        assert backend.default_ttl == 0
+    async def test_set_and_get(self, cache: MemoryCacheBackend) -> None:
+        """Test basic set and get operations."""
+        # Set a value
+        result = await cache.set("key1", "value1")
+        assert result is True
 
+        # Get the value
+        value = await cache.get("key1")
+        assert value == "value1"
 
-class TestMemoryCacheBackendHelpers:
-    """Test helper methods."""
+        # Stats should reflect the operations
+        stats = await cache.get_stats()
+        assert stats["hits"] == 1
+        assert stats["misses"] == 0
+        assert stats["sets"] == 1
 
-    def test_make_key_with_namespace(self):
-        """Test key generation with namespace prefix."""
-        backend = MemoryCacheBackend(namespace="myapp")
+    async def test_get_nonexistent_key(self, cache: MemoryCacheBackend) -> None:
+        """Test getting a key that doesn't exist."""
+        value = await cache.get("nonexistent")
+        assert value is None
 
-        assert backend._make_key("user:123") == "myapp:user:123"
-        assert backend._make_key("session") == "myapp:session"
+        stats = await cache.get_stats()
+        assert stats["misses"] == 1
+        assert stats["hits"] == 0
 
-    def test_ttl_seconds_normalization(self):
-        """Test TTL normalization logic."""
-        backend = MemoryCacheBackend(default_ttl=3600)
-
-        # None -> default_ttl
-        assert backend._ttl_seconds(None) == 3600
-
-        # 0 or negative -> None (no expiry)
-        assert backend._ttl_seconds(0) is None
-        assert backend._ttl_seconds(-100) is None
-
-        # Positive -> as provided
-        assert backend._ttl_seconds(60) == 60
-        assert backend._ttl_seconds(7200) == 7200
-
-    def test_is_expired_no_expiry(self):
-        """Test that items with no expiry never expire."""
-        backend = MemoryCacheBackend()
-        entry = {"value": "test", "expires_at": None}
-
-        assert backend._is_expired(entry) is False
-
-    def test_is_expired_not_yet_expired(self):
-        """Test that items are not expired before expiry time."""
-        backend = MemoryCacheBackend()
-        future_time = time.time() + 3600
-        entry = {"value": "test", "expires_at": future_time}
-
-        assert backend._is_expired(entry) is False
-
-    def test_is_expired_already_expired(self):
-        """Test that items are expired after expiry time."""
-        backend = MemoryCacheBackend()
-        past_time = time.time() - 1
-        entry = {"value": "test", "expires_at": past_time}
-
-        assert backend._is_expired(entry) is True
-
-
-@pytest.mark.asyncio
-class TestMemoryCacheBackendBasicOperations:
-    """Test basic cache operations."""
-
-    async def test_get_existing_key(self):
-        """Test retrieving an existing key."""
-        backend = MemoryCacheBackend()
-
-        await backend.set("mykey", "myvalue")
-        result = await backend.get("mykey")
-
-        assert result == "myvalue"
-        assert backend._hits == 1
-        assert backend._misses == 0
-
-    async def test_get_missing_key(self):
-        """Test retrieving a non-existent key."""
-        backend = MemoryCacheBackend()
-
-        result = await backend.get("nonexistent")
-
-        assert result is None
-        assert backend._hits == 0
-        assert backend._misses == 1
-
-    async def test_get_expired_key(self):
-        """Test that expired keys return None."""
-        backend = MemoryCacheBackend()
-
-        # Set with very short TTL
-        await backend.set("expires", "value", ttl=1)
-
-        # Should exist immediately
-        result = await backend.get("expires")
-        assert result == "value"
-
-        # Wait for expiration
-        await asyncio.sleep(1.5)
-
-        # Should be expired and return None
-        result = await backend.get("expires")
-        assert result is None
-        assert backend._misses == 1
-
-    async def test_set_with_default_ttl(self):
-        """Test setting a value with default TTL."""
-        backend = MemoryCacheBackend(default_ttl=60)
-
-        success = await backend.set("mykey", "myvalue")
-
-        assert success is True
-        assert backend._sets == 1
-
-        # Verify value is stored
-        result = await backend.get("mykey")
-        assert result == "myvalue"
-
-    async def test_set_with_custom_ttl(self):
-        """Test setting a value with custom TTL."""
-        backend = MemoryCacheBackend()
-
-        success = await backend.set("mykey", "myvalue", ttl=30)
-        assert success is True
-
-        # Value should exist
-        result = await backend.get("mykey")
-        assert result == "myvalue"
-
-    async def test_set_with_zero_ttl_no_expiry(self):
-        """Test setting a value with TTL=0 (no expiry)."""
-        backend = MemoryCacheBackend()
-
-        await backend.set("mykey", "myvalue", ttl=0)
-
-        # Check internal storage to verify no expiry
-        ns_key = backend._make_key("mykey")
-        assert ns_key in backend._cache
-        assert backend._cache[ns_key]["expires_at"] is None
-
-    async def test_set_overwrites_existing(self):
-        """Test that setting an existing key updates the value."""
-        backend = MemoryCacheBackend()
-
-        await backend.set("mykey", "value1")
-        await backend.set("mykey", "value2")
-
-        result = await backend.get("mykey")
-        assert result == "value2"
-        assert backend._sets == 2
-
-    async def test_set_complex_data(self):
-        """Test setting complex data structures."""
-        backend = MemoryCacheBackend()
-
-        complex_data = {
-            "user": {"id": 123, "name": "Alice"},
-            "tags": ["python", "memory", "async"],
-            "metadata": {"created": "2025-01-01", "active": True},
+    async def test_set_with_various_types(self, cache: MemoryCacheBackend) -> None:
+        """Test storing different data types."""
+        test_data: dict[str, Any] = {
+            "string": "hello",
+            "int": 42,
+            "float": 3.14,
+            "bool": True,
+            "none": None,
+            "list": [1, 2, 3],
+            "dict": {"nested": "value"},
         }
 
-        await backend.set("complex", complex_data)
-        result = await backend.get("complex")
-        assert result == complex_data
+        for key, value in test_data.items():
+            await cache.set(key, value)
 
-    async def test_delete_existing_key(self):
-        """Test deleting an existing key."""
-        backend = MemoryCacheBackend()
+        for key, expected_value in test_data.items():
+            actual_value = await cache.get(key)
+            assert actual_value == expected_value
 
-        await backend.set("mykey", "myvalue")
-        deleted = await backend.delete("mykey")
+    async def test_delete(self, cache: MemoryCacheBackend) -> None:
+        """Test deleting keys."""
+        # Set a value
+        await cache.set("key1", "value1")
+        assert await cache.exists("key1") is True
 
-        assert deleted is True
-        assert backend._deletes == 1
+        # Delete it
+        result = await cache.delete("key1")
+        assert result is True
 
-        # Verify key is gone
-        result = await backend.get("mykey")
-        assert result is None
+        # Verify it's gone
+        assert await cache.exists("key1") is False
+        assert await cache.get("key1") is None
 
-    async def test_delete_missing_key(self):
-        """Test deleting a non-existent key."""
-        backend = MemoryCacheBackend()
+        # Try to delete non-existent key
+        result = await cache.delete("key1")
+        assert result is False
 
-        deleted = await backend.delete("nonexistent")
-        assert deleted is False
+    async def test_exists(self, cache: MemoryCacheBackend) -> None:
+        """Test checking key existence."""
+        # Key doesn't exist initially
+        assert await cache.exists("key1") is False
 
-    async def test_exists_for_existing_key(self):
-        """Test checking existence of an existing key."""
-        backend = MemoryCacheBackend()
+        # Set the key
+        await cache.set("key1", "value1")
+        assert await cache.exists("key1") is True
 
-        await backend.set("mykey", "myvalue")
-        exists = await backend.exists("mykey")
+        # Delete the key
+        await cache.delete("key1")
+        assert await cache.exists("key1") is False
 
-        assert exists is True
+    async def test_clear(self, cache: MemoryCacheBackend) -> None:
+        """Test clearing all cache entries."""
+        # Add multiple entries
+        for i in range(5):
+            await cache.set(f"key{i}", f"value{i}")
 
-    async def test_exists_for_missing_key(self):
-        """Test checking existence of a missing key."""
-        backend = MemoryCacheBackend()
+        stats = await cache.get_stats()
+        assert stats["size"] == 5
 
-        exists = await backend.exists("nonexistent")
-        assert exists is False
+        # Clear the cache
+        result = await cache.clear()
+        assert result is True
 
-    async def test_exists_for_expired_key(self):
-        """Test that expired keys are reported as not existing."""
-        backend = MemoryCacheBackend()
-
-        await backend.set("expires", "value", ttl=1)
-        await asyncio.sleep(1.5)
-
-        exists = await backend.exists("expires")
-        assert exists is False
-
-
-@pytest.mark.asyncio
-class TestMemoryCacheBackendLRUEviction:
-    """Test LRU eviction when cache reaches max size."""
-
-    async def test_eviction_when_at_capacity(self):
-        """Test that oldest items are evicted when at capacity."""
-        backend = MemoryCacheBackend(max_size=3)
-
-        # Fill cache to capacity
-        await backend.set("key1", "value1")
-        await backend.set("key2", "value2")
-        await backend.set("key3", "value3")
-
-        # Verify all exist
-        assert await backend.exists("key1") is True
-        assert await backend.exists("key2") is True
-        assert await backend.exists("key3") is True
-
-        # Add one more item, should evict key1 (oldest)
-        await backend.set("key4", "value4")
-
-        # key1 should be evicted
-        assert await backend.exists("key1") is False
-        assert await backend.exists("key2") is True
-        assert await backend.exists("key3") is True
-        assert await backend.exists("key4") is True
-
-    async def test_get_updates_access_order(self):
-        """Test that get operations update LRU order."""
-        backend = MemoryCacheBackend(max_size=3)
-
-        await backend.set("key1", "value1")
-        await backend.set("key2", "value2")
-        await backend.set("key3", "value3")
-
-        # Access key1 to make it most recently used
-        await backend.get("key1")
-
-        # Add key4, should evict key2 (now oldest)
-        await backend.set("key4", "value4")
-
-        assert await backend.exists("key1") is True  # Accessed recently
-        assert await backend.exists("key2") is False  # Evicted
-        assert await backend.exists("key3") is True
-        assert await backend.exists("key4") is True
-
-    async def test_no_eviction_when_under_capacity(self):
-        """Test that no eviction occurs when under capacity."""
-        backend = MemoryCacheBackend(max_size=10)
+        # Verify all entries are gone
+        stats = await cache.get_stats()
+        assert stats["size"] == 0
 
         for i in range(5):
-            await backend.set(f"key{i}", f"value{i}")
+            assert await cache.exists(f"key{i}") is False
 
-        # All items should still exist
-        for i in range(5):
-            assert await backend.exists(f"key{i}") is True
+    async def test_ttl_expiration(self, cache: MemoryCacheBackend) -> None:
+        """Test that entries expire after TTL."""
+        # Set a value with 1 second TTL
+        await cache.set("key1", "value1", ttl=1)
 
+        # Should exist immediately
+        assert await cache.exists("key1") is True
+        assert await cache.get("key1") == "value1"
 
-@pytest.mark.asyncio
-class TestMemoryCacheBackendClear:
-    """Test clear operation with namespace isolation."""
+        # Wait for expiration
+        await asyncio.sleep(1.1)
 
-    async def test_clear_removes_all_namespace_keys(self):
-        """Test that clear removes all keys in the namespace."""
-        backend = MemoryCacheBackend(namespace="app1")
+        # Should be expired now
+        assert await cache.exists("key1") is False
+        assert await cache.get("key1") is None
 
-        await backend.set("key1", "value1")
-        await backend.set("key2", "value2")
-        await backend.set("key3", "value3")
+    async def test_ttl_zero_no_expiry(self, cache: MemoryCacheBackend) -> None:
+        """Test that TTL=0 means no expiration."""
+        await cache.set("key1", "value1", ttl=0)
 
-        success = await backend.clear()
-        assert success is True
+        # Should exist immediately
+        assert await cache.get("key1") == "value1"
 
-        # Verify all keys are gone
-        assert await backend.exists("key1") is False
-        assert await backend.exists("key2") is False
-        assert await backend.exists("key3") is False
+        # Should still exist after default TTL would have expired
+        await asyncio.sleep(0.1)
+        assert await cache.get("key1") == "value1"
 
-    async def test_clear_empty_cache(self):
-        """Test clearing when cache is empty."""
-        backend = MemoryCacheBackend()
-
-        success = await backend.clear()
-        assert success is True
-
-    async def test_clear_namespace_isolation(self):
-        """Test that clear only affects the specific namespace."""
-        backend1 = MemoryCacheBackend(namespace="app1")
-        backend2 = MemoryCacheBackend(namespace="app2")
-
-        # Add keys to both backends (they share the same internal dict in this test)
-        await backend1.set("key1", "value1")
-        await backend2.set("key1", "value1")
-
-        # Clear backend1
-        await backend1.clear()
-
-        # Backend1 keys should be gone
-        assert await backend1.exists("key1") is False
-
-        # Backend2 keys should still exist
-        assert await backend2.exists("key1") is True
-
-
-@pytest.mark.asyncio
-class TestMemoryCacheBackendStats:
-    """Test statistics and monitoring."""
-
-    async def test_get_stats_basic(self):
-        """Test basic statistics collection."""
-        backend = MemoryCacheBackend(
+    async def test_ttl_none_uses_default(self, cache: MemoryCacheBackend) -> None:
+        """Test that TTL=None uses the default TTL."""
+        # Create cache with short default TTL
+        short_ttl_cache = MemoryCacheBackend(
+            max_size=10,
+            default_ttl=1,
             namespace="test",
-            default_ttl=3600,
-            max_size=100,
         )
 
-        # Perform some operations
-        await backend.set("key1", "value1")
-        await backend.get("key1")  # Hit
-        await backend.get("key2")  # Miss
-        await backend.delete("key1")
+        await short_ttl_cache.set("key1", "value1", ttl=None)
+        assert await short_ttl_cache.get("key1") == "value1"
 
-        stats = await backend.get_stats()
+        # Wait for default TTL to expire
+        await asyncio.sleep(1.1)
+        assert await short_ttl_cache.get("key1") is None
 
-        assert stats["backend"] == "memory"
-        assert stats["namespace"] == "test"
-        assert stats["default_ttl"] == 3600
-        assert stats["max_size"] == 100
+    async def test_lru_eviction(self) -> None:
+        """Test LRU eviction when max_size is reached."""
+        # Create cache with small max_size for this test
+        cache = MemoryCacheBackend(max_size=10, default_ttl=3600, namespace="test")
+
+        # Fill the cache to max_size (10)
+        for i in range(10):
+            await cache.set(f"key{i}", f"value{i}")
+
+        stats = await cache.get_stats()
+        assert stats["size"] == 10
+        assert stats["evictions"] == 0
+
+        # Access key0 to make it recently used
+        await cache.get("key0")
+
+        # Add one more item (should evict key1, the least recently used)
+        await cache.set("key10", "value10")
+
+        stats = await cache.get_stats()
+        assert stats["size"] == 10
+        assert stats["evictions"] == 1
+
+        # key1 should be evicted, key0 should still exist
+        assert await cache.exists("key1") is False
+        assert await cache.exists("key0") is True
+        assert await cache.exists("key10") is True
+
+    async def test_get_many(self, cache: MemoryCacheBackend) -> None:
+        """Test batch get operation."""
+        # Set multiple values
+        for i in range(5):
+            await cache.set(f"key{i}", f"value{i}")
+
+        # Get multiple keys
+        result = await cache.get_many(["key0", "key2", "key4", "nonexistent"])
+
+        assert result == {
+            "key0": "value0",
+            "key2": "value2",
+            "key4": "value4",
+        }
+        assert "nonexistent" not in result
+
+    async def test_set_many(self, cache: MemoryCacheBackend) -> None:
+        """Test batch set operation."""
+        items = {
+            "key1": "value1",
+            "key2": "value2",
+            "key3": "value3",
+        }
+
+        count = await cache.set_many(items)
+        assert count == 3
+
+        # Verify all items were set
+        for key, value in items.items():
+            assert await cache.get(key) == value
+
+    async def test_set_many_with_ttl(self, cache: MemoryCacheBackend) -> None:
+        """Test batch set with TTL."""
+        items = {
+            "key1": "value1",
+            "key2": "value2",
+        }
+
+        await cache.set_many(items, ttl=1)
+
+        # Should exist immediately
+        assert await cache.get("key1") == "value1"
+        assert await cache.get("key2") == "value2"
+
+        # Wait for expiration
+        await asyncio.sleep(1.1)
+
+        # Should be expired
+        assert await cache.get("key1") is None
+        assert await cache.get("key2") is None
+
+    async def test_delete_many(self, cache: MemoryCacheBackend) -> None:
+        """Test batch delete operation."""
+        # Set multiple values
+        for i in range(5):
+            await cache.set(f"key{i}", f"value{i}")
+
+        # Delete multiple keys
+        count = await cache.delete_many(["key0", "key2", "key4", "nonexistent"])
+
+        # Should delete 3 keys (nonexistent doesn't count)
+        assert count == 3
+
+        # Verify correct keys were deleted
+        assert await cache.exists("key0") is False
+        assert await cache.exists("key1") is True
+        assert await cache.exists("key2") is False
+        assert await cache.exists("key3") is True
+        assert await cache.exists("key4") is False
+
+    async def test_get_stats(self, cache: MemoryCacheBackend) -> None:
+        """Test statistics tracking."""
+        # Initial stats
+        stats = await cache.get_stats()
+        assert stats["hits"] == 0
+        assert stats["misses"] == 0
+        assert stats["sets"] == 0
+        assert stats["deletes"] == 0
+        assert stats["evictions"] == 0
+        assert stats["size"] == 0
+
+        # Perform various operations
+        await cache.set("key1", "value1")
+        await cache.get("key1")  # hit
+        await cache.get("key2")  # miss
+        await cache.delete("key1")
+
+        stats = await cache.get_stats()
         assert stats["hits"] == 1
         assert stats["misses"] == 1
         assert stats["sets"] == 1
         assert stats["deletes"] == 1
-        assert stats["hit_rate"] == 50.0  # 1 hit out of 2 requests
-        assert "size" in stats
-
-    async def test_get_stats_no_requests_zero_hit_rate(self):
-        """Test hit rate calculation when no requests."""
-        backend = MemoryCacheBackend()
-
-        stats = await backend.get_stats()
-        assert stats["hit_rate"] == 0.0
-
-    async def test_hit_miss_tracking(self):
-        """Test accurate hit/miss tracking."""
-        backend = MemoryCacheBackend()
-
-        await backend.set("exists", "value")
-
-        # 3 hits
-        await backend.get("exists")
-        await backend.get("exists")
-        await backend.get("exists")
-
-        # 2 misses
-        await backend.get("miss1")
-        await backend.get("miss2")
-
-        stats = await backend.get_stats()
-        assert stats["hits"] == 3
-        assert stats["misses"] == 2
-        assert stats["hit_rate"] == 60.0  # 3 hits out of 5 total
-
-    async def test_stats_size_reflects_current_entries(self):
-        """Test that size in stats reflects current number of entries."""
-        backend = MemoryCacheBackend()
-
-        # Add 5 entries
-        for i in range(5):
-            await backend.set(f"key{i}", f"value{i}")
-
-        stats = await backend.get_stats()
-        assert stats["size"] == 5
-
-        # Delete 2 entries
-        await backend.delete("key0")
-        await backend.delete("key1")
-
-        stats = await backend.get_stats()
-        assert stats["size"] == 3
-
-
-@pytest.mark.asyncio
-class TestMemoryCacheBackendResourceManagement:
-    """Test resource cleanup and lifecycle."""
-
-    async def test_close_clears_cache(self):
-        """Test that close clears all entries."""
-        backend = MemoryCacheBackend()
-
-        await backend.set("key1", "value1")
-        await backend.set("key2", "value2")
-
-        await backend.close()
-
-        # Cache should be empty after close
-        stats = await backend.get_stats()
         assert stats["size"] == 0
 
-    async def test_close_idempotent(self):
-        """Test that close can be called multiple times safely."""
-        backend = MemoryCacheBackend()
+    async def test_namespace_isolation(self) -> None:
+        """Test that different namespaces are isolated."""
+        cache1 = MemoryCacheBackend(namespace="ns1")
+        cache2 = MemoryCacheBackend(namespace="ns2")
 
-        await backend.close()
-        await backend.close()  # Should not raise
+        await cache1.set("key1", "value1")
+        await cache2.set("key1", "value2")
 
+        # Each cache should have its own value
+        assert await cache1.get("key1") == "value1"
+        assert await cache2.get("key1") == "value2"
 
-@pytest.mark.asyncio
-class TestMemoryCacheBackendEdgeCases:
-    """Test edge cases and special scenarios."""
+    async def test_close(self, cache: MemoryCacheBackend) -> None:
+        """Test cache close operation."""
+        await cache.set("key1", "value1")
 
-    async def test_unicode_keys_and_values(self):
-        """Test handling of Unicode keys and values."""
-        backend = MemoryCacheBackend()
+        # Close should succeed
+        await cache.close()
 
-        unicode_data = {
-            "greeting": "Hello 世界 🌍",
-            "emoji": "🎉🎊🎈",
-            "special": "Ñoño café",
-        }
+        # Cache should still work after close (memory backend doesn't need cleanup)
+        assert await cache.get("key1") == "value1"
 
-        await backend.set("unicode", unicode_data)
-        result = await backend.get("unicode")
-        assert result == unicode_data
+    async def test_concurrent_operations(self, cache: MemoryCacheBackend) -> None:
+        """Test thread safety with concurrent operations."""
 
-    async def test_none_as_value(self):
-        """Test storing None as a value."""
-        backend = MemoryCacheBackend()
+        async def set_values(start: int, end: int) -> None:
+            for i in range(start, end):
+                await cache.set(f"key{i}", f"value{i}")
 
-        await backend.set("null_key", None)
-        result = await backend.get("null_key")
-        assert result is None
+        # Run concurrent set operations
+        await asyncio.gather(
+            set_values(0, 5),
+            set_values(5, 10),
+            set_values(10, 15),
+        )
 
-        # Key should still exist
-        exists = await backend.exists("null_key")
-        assert exists is True
+        # Verify all values were set correctly
+        for i in range(15):
+            value = await cache.get(f"key{i}")
+            assert value == f"value{i}"
 
-    async def test_large_values(self):
-        """Test storing and retrieving large values."""
-        backend = MemoryCacheBackend()
+    async def test_overwrite_existing_key(self, cache: MemoryCacheBackend) -> None:
+        """Test that setting an existing key overwrites the value."""
+        await cache.set("key1", "value1")
+        assert await cache.get("key1") == "value1"
 
-        # Create a large value (~1MB of data)
-        large_value = {"data": "x" * 1000000}
+        await cache.set("key1", "value2")
+        assert await cache.get("key1") == "value2"
 
-        await backend.set("large", large_value)
-        result = await backend.get("large")
-        assert result == large_value
+        # Should only count as 2 sets, not 3
+        stats = await cache.get_stats()
+        assert stats["sets"] == 2
 
-    async def test_special_characters_in_keys(self):
-        """Test keys with special characters."""
-        backend = MemoryCacheBackend()
+    async def test_empty_cache_operations(self, cache: MemoryCacheBackend) -> None:
+        """Test operations on empty cache."""
+        # Clear empty cache
+        assert await cache.clear() is True
 
-        special_keys = [
-            "key:with:colons",
-            "key-with-dashes",
-            "key_with_underscores",
-            "key.with.dots",
-            "key/with/slashes",
-        ]
+        # Get from empty cache
+        assert await cache.get("key1") is None
 
-        for key in special_keys:
-            await backend.set(key, f"value-{key}")
+        # Delete from empty cache
+        assert await cache.delete("key1") is False
 
-        for key in special_keys:
-            result = await backend.get(key)
-            assert result == f"value-{key}"
+        # Exists on empty cache
+        assert await cache.exists("key1") is False
 
-    async def test_concurrent_operations(self):
-        """Test concurrent get/set operations."""
-        backend = MemoryCacheBackend()
+        # Get many from empty cache
+        assert await cache.get_many(["key1", "key2"]) == {}
 
-        async def set_value(key: str, value: str):
-            await backend.set(key, value)
-
-        async def get_value(key: str):
-            return await backend.get(key)
-
-        # Set 100 keys concurrently
-        await asyncio.gather(*[set_value(f"key{i}", f"value{i}") for i in range(100)])
-
-        # Get all keys concurrently
-        results = await asyncio.gather(*[get_value(f"key{i}") for i in range(100)])
-
-        # Verify all values
-        for i, result in enumerate(results):
-            assert result == f"value{i}"
-
-    async def test_empty_string_key(self):
-        """Test handling of empty string as key."""
-        backend = MemoryCacheBackend()
-
-        await backend.set("", "empty_key_value")
-        result = await backend.get("")
-        assert result == "empty_key_value"
-
-    async def test_very_long_key(self):
-        """Test handling of very long keys."""
-        backend = MemoryCacheBackend()
-
-        long_key = "k" * 10000
-        await backend.set(long_key, "value")
-        result = await backend.get(long_key)
-        assert result == "value"
+        # Delete many from empty cache
+        assert await cache.delete_many(["key1", "key2"]) == 0

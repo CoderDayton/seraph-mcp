@@ -1,541 +1,236 @@
-# Seraph MCP — Test Suite
+# Seraph MCP Test Suite
 
-Comprehensive test suite for the Seraph MCP platform, ensuring quality, reliability, and SDD compliance.
-
----
+Comprehensive test suite for the Seraph MCP project, covering all major components with modern Python 3.12+ async patterns and type hints.
 
 ## Overview
 
-The test suite covers:
-- **Unit tests**: Isolated testing of individual components
-- **Integration tests**: Testing component interactions
-- **Smoke tests**: Quick validation of critical paths
-- **Performance tests**: Optional performance benchmarking
-
----
+The test suite is organized into **unit tests** and **integration tests**, providing thorough coverage of:
+- Cache backends (Memory and Redis)
+- Cache factory and lifecycle management
+- Context optimization components
+- Seraph compression system
+- Configuration and error handling
 
 ## Test Structure
 
 ```
 tests/
-├── conftest.py              # Shared fixtures and configuration
-├── unit/                    # Unit tests (isolated components)
+├── conftest.py                              # Shared fixtures and configuration
+├── unit/                                    # Unit tests (isolated component testing)
 │   ├── cache/
-│   │   ├── test_memory_backend.py
-│   │   └── test_redis_backend.py
-│   ├── config/
-│   ├── observability/
-│   └── test_errors.py
-├── integration/             # Integration tests (component interaction)
-│   ├── test_cache_factory.py
-│   └── test_server_lifecycle.py
-└── README.md               # This file
+│   │   ├── __init__.py
+│   │   ├── test_memory_backend.py          # Memory cache backend tests
+│   │   └── test_redis_backend.py           # Redis cache backend tests
+│   └── context_optimization/
+│       ├── __init__.py
+│       └── test_seraph_compression.py      # Seraph compression tests
+└── integration/                             # Integration tests (component interaction)
+    └── test_cache_factory.py               # Cache factory integration tests
 ```
-
----
 
 ## Running Tests
 
-### All Tests
-
+### Run All Tests
 ```bash
-# Run all tests with coverage
-uv run pytest --cov=src --cov-report=term --cov-report=html
-
-# Run with verbose output
-uv run pytest -v
-
-# Run with debug output
-uv run pytest -vv -s
+pytest tests/
 ```
 
-### Unit Tests Only
-
+### Run Specific Test Categories
 ```bash
-uv run pytest tests/unit/
+# Unit tests only
+pytest tests/unit/
+
+# Integration tests only
+pytest tests/integration/
+
+# Cache tests only
+pytest tests/unit/cache/
+
+# Context optimization tests only
+pytest tests/unit/context_optimization/
 ```
 
-### Integration Tests Only
-
+### Run Specific Test Files
 ```bash
-uv run pytest tests/integration/
+pytest tests/unit/cache/test_memory_backend.py
+pytest tests/unit/cache/test_redis_backend.py
+pytest tests/integration/test_cache_factory.py
 ```
 
-### Specific Test File
-
+### Run with Coverage
 ```bash
-uv run pytest tests/unit/cache/test_redis_backend.py
+pytest tests/ --cov=src --cov-report=html
 ```
 
-### Specific Test Function
-
+### Run with Verbose Output
 ```bash
-uv run pytest tests/unit/cache/test_redis_backend.py::TestRedisCacheBackendBasicOperations::test_get_existing_key
+pytest tests/ -v
 ```
 
-### With Coverage Report
+## Test Requirements
 
-```bash
-# Terminal report
-uv run pytest --cov=src --cov-report=term-missing
+### Core Dependencies
+- `pytest` - Testing framework
+- `pytest-asyncio` - Async test support
+- `pytest-cov` - Coverage reporting
 
-# HTML report (opens in browser)
-uv run pytest --cov=src --cov-report=html
-open htmlcov/index.html
-```
-
----
-
-## Test Categories
-
-### Unit Tests
-
-Test individual components in isolation:
-
-```python
-@pytest.mark.asyncio
-async def test_cache_set_and_get():
-    """Test basic cache operations."""
-    backend = MemoryCacheBackend()
-    await backend.set("key", "value")
-    result = await backend.get("key")
-    assert result == "value"
-```
-
-**Coverage:**
-- Cache backends (memory and Redis)
-- Configuration loading and validation
-- Error types and handling
-- Observability adapter
-- Utility functions
-
-### Integration Tests
-
-Test component interactions:
-
-```python
-@pytest.mark.asyncio
-async def test_cache_factory_with_redis(mock_env_redis, redis_client):
-    """Test cache factory creates Redis backend correctly."""
-    cache = create_cache()
-    assert isinstance(cache, RedisCacheBackend)
-    
-    await cache.set("key", "value")
-    result = await cache.get("key")
-    assert result == "value"
-```
-
-**Coverage:**
-- Cache factory with different backends
-- Server lifecycle (startup/shutdown)
-- MCP tool invocation
-- Configuration switching
-- Namespace isolation
-
-### Smoke Tests
-
-Quick validation of critical paths:
-
-```bash
-# Test server startup
-CACHE_BACKEND=memory uv run python -c "
-import asyncio
-from src.server import initialize_server, cleanup_server
-
-async def test():
-    await initialize_server()
-    print('✓ Server initialized')
-    await cleanup_server()
-    print('✓ Server cleanup complete')
-
-asyncio.run(test())
-"
-```
-
----
-
-## Prerequisites
-
-### Required Services
-
-**Redis** (for Redis backend tests):
-```bash
-# Using Docker
-docker run -d --name test-redis -p 6379:6379 redis:7-alpine
-
-# Or use docker-compose
-docker-compose up -d redis
-```
+### Optional Dependencies
+- `redis` - Required for Redis backend tests
+- Redis server running on `localhost:6379` (or set `TEST_REDIS_URL` env var)
 
 ### Environment Variables
+- `TEST_REDIS_URL` - Redis connection URL for tests (default: `redis://localhost:6379/15`)
+- `ENVIRONMENT` - Set to `test` automatically by conftest
+- `LOG_LEVEL` - Set to `DEBUG` automatically by conftest
 
-Set test-specific environment variables:
+## Test Coverage
 
-```bash
-# Test environment
-export ENVIRONMENT=test
-export LOG_LEVEL=DEBUG
+### Cache System
+- **Memory Backend** (`test_memory_backend.py`)
+  - Basic CRUD operations (get, set, delete, exists)
+  - TTL and expiration handling
+  - LRU eviction when max_size reached
+  - Batch operations (get_many, set_many, delete_many)
+  - Namespace isolation
+  - Statistics tracking
+  - Concurrent operations
+  - Edge cases (empty values, Unicode, special characters)
 
-# Redis connection for tests
-export TEST_REDIS_URL=redis://localhost:6379/15
+- **Redis Backend** (`test_redis_backend.py`)
+  - All Memory Backend tests plus:
+  - Redis-specific connection handling
+  - Redis persistence across restarts
+  - Redis namespace isolation with SCAN
+  - Error handling for connection failures
+  - Large batch operations
 
-# Cache configuration
-export CACHE_BACKEND=redis
-export CACHE_NAMESPACE=test
-```
+- **Cache Factory** (`test_cache_factory.py`)
+  - Factory pattern and singleton behavior
+  - Multiple named cache instances
+  - Configuration handling
+  - Backend selection (Memory vs Redis)
+  - Lifecycle management (create, get, close)
+  - Namespace isolation across instances
+  - Concurrent factory calls
+  - Mixed backend operations
 
----
+### Context Optimization
+- **Seraph Compression** (`test_seraph_compression.py`)
+  - Utility functions (token counting, hashing, simhash)
+  - BM25 ranking algorithm
+  - Multi-layer compression (L1/L2/L3)
+  - Deterministic compression
+  - Compression caching
+  - Quality preservation
+  - Various text types (short, long, Unicode, code blocks)
+  - Edge cases (empty text, whitespace, special characters)
 
 ## Fixtures
 
 ### Shared Fixtures (conftest.py)
-
-**`event_loop`**: Session-scoped event loop
-```python
-@pytest.fixture(scope="session")
-def event_loop():
-    """Create event loop for test session."""
-    loop = asyncio.get_event_loop_policy().new_event_loop()
-    yield loop
-    loop.close()
-```
-
-**`redis_client`**: Redis client for testing
-```python
-@pytest.fixture
-async def redis_client(test_redis_url):
-    """Create Redis client for testing."""
-    client = Redis.from_url(test_redis_url, decode_responses=True)
-    await client.ping()
-    await client.flushdb()  # Clear before test
-    yield client
-    await client.flushdb()  # Clear after test
-    await client.close()
-```
-
-**`mock_env_memory`**: Memory cache environment
-```python
-@pytest.fixture
-def mock_env_memory(monkeypatch):
-    """Set environment for memory cache backend."""
-    monkeypatch.setenv("CACHE_BACKEND", "memory")
-    monkeypatch.setenv("CACHE_MAX_SIZE", "100")
-    monkeypatch.setenv("CACHE_TTL_SECONDS", "3600")
-```
-
-**`mock_env_redis`**: Redis cache environment
-```python
-@pytest.fixture
-def mock_env_redis(monkeypatch, test_redis_url):
-    """Set environment for Redis cache backend."""
-    monkeypatch.setenv("CACHE_BACKEND", "redis")
-    monkeypatch.setenv("REDIS_URL", test_redis_url)
-```
-
----
-
-## Writing New Tests
-
-### Test Naming Convention
-
-- **File names**: `test_<module>.py`
-- **Class names**: `Test<Feature>`
-- **Function names**: `test_<behavior>`
-
-```python
-# tests/unit/cache/test_new_feature.py
-
-@pytest.mark.asyncio
-class TestNewFeature:
-    """Test new feature functionality."""
-    
-    async def test_feature_basic_case(self):
-        """Test basic case for new feature."""
-        pass
-    
-    async def test_feature_edge_case(self):
-        """Test edge case for new feature."""
-        pass
-    
-    async def test_feature_error_handling(self):
-        """Test error handling for new feature."""
-        pass
-```
-
-### Test Structure (AAA Pattern)
-
-```python
-async def test_example():
-    """Test description."""
-    # Arrange: Set up test data and conditions
-    backend = MemoryCacheBackend()
-    test_data = {"key": "value"}
-    
-    # Act: Perform the operation
-    await backend.set("test_key", test_data)
-    result = await backend.get("test_key")
-    
-    # Assert: Verify the outcome
-    assert result == test_data
-```
-
-### Async Tests
-
-Always use `@pytest.mark.asyncio` for async tests:
-
-```python
-@pytest.mark.asyncio
-async def test_async_operation():
-    """Test async operation."""
-    result = await async_function()
-    assert result is not None
-```
-
-### Mocking
-
-Use pytest fixtures and monkeypatch for mocking:
-
-```python
-@pytest.fixture
-def mock_redis_error(monkeypatch):
-    """Mock Redis connection error."""
-    def mock_ping():
-        raise ConnectionError("Redis unavailable")
-    
-    monkeypatch.setattr("redis.asyncio.Redis.ping", mock_ping)
-```
-
----
-
-## Coverage Requirements
-
-Per SDD.md, core code must maintain **≥85% test coverage**.
-
-### Check Coverage
-
-```bash
-# Run with coverage
-uv run pytest --cov=src --cov-report=term-missing
-
-# Generate HTML report
-uv run pytest --cov=src --cov-report=html
-open htmlcov/index.html
-
-# Fail if below threshold
-uv run pytest --cov=src --cov-fail-under=85
-```
-
-### Coverage by Module
-
-```bash
-uv run coverage report --include="src/cache/*"
-uv run coverage report --include="src/config/*"
-uv run coverage report --include="src/observability/*"
-```
-
----
-
-## Continuous Integration
-
-Tests run automatically in CI/CD pipeline (`.github/workflows/ci.yml`):
-
-1. **Lint & Format**: Ruff checks
-2. **Type Check**: MyPy validation
-3. **Unit Tests**: All unit tests with coverage
-4. **Integration Tests**: Component interaction tests
-5. **Security Scan**: Bandit, Safety, secret detection
-6. **Smoke Tests**: Critical path validation
-7. **Coverage Gate**: Fails if coverage < 85%
-
----
-
-## Performance Testing
-
-Optional performance tests (not run by default):
-
-```bash
-# Run performance tests
-uv run pytest tests/performance/ --benchmark-only
-
-# Save benchmark results
-uv run pytest tests/performance/ --benchmark-autosave
-
-# Compare with baseline
-uv run pytest tests/performance/ --benchmark-compare
-```
-
----
-
-## Troubleshooting
-
-### Redis Connection Failures
-
-**Problem**: Tests fail with Redis connection errors.
-
-**Solution**:
-```bash
-# Check Redis is running
-redis-cli ping
-
-# Start Redis if not running
-docker run -d -p 6379:6379 redis:7-alpine
-
-# Set correct Redis URL
-export TEST_REDIS_URL=redis://localhost:6379/15
-```
-
-### Import Errors
-
-**Problem**: `ModuleNotFoundError: No module named 'src'`
-
-**Solution**:
-```bash
-# Install package in editable mode
-uv pip install -e .
-
-# Or set PYTHONPATH
-export PYTHONPATH=$(pwd):$PYTHONPATH
-```
-
-### Async Warnings
-
-**Problem**: `RuntimeWarning: coroutine was never awaited`
-
-**Solution**:
-```python
-# Use @pytest.mark.asyncio decorator
-@pytest.mark.asyncio
-async def test_async_function():
-    result = await async_function()  # Don't forget await!
-```
-
-### Fixture Cleanup
-
-**Problem**: Tests interfere with each other.
-
-**Solution**:
-```python
-@pytest.fixture(autouse=True)
-async def cleanup():
-    """Clean up after each test."""
-    yield
-    await close_all_caches()
-    reset_cache_factory()
-```
-
----
+- `event_loop_policy` - Event loop policy for async tests
+- `event_loop` - Event loop for each test function
+- `test_redis_url` - Redis URL for testing (database 15)
+- `redis_client` - Configured Redis client with auto-cleanup
+- `mock_env_memory` - Environment variables for memory cache
+- `mock_env_redis` - Environment variables for Redis cache
+- `sample_cache_data` - Sample data for cache tests
+- `sample_text_short` - Short text for compression tests
+- `sample_text_long` - Long text for compression tests
+- `sample_compression_config` - Configuration for compression tests
+- `mock_ai_provider` - Mock AI provider for optimization tests
+- `reset_cache_factory` - Auto-reset cache factory after each test
+- `temp_cache_dir` - Temporary directory for cache tests
 
 ## Best Practices
 
-### 1. Test Independence
+### Test Organization
+- One test class per component/feature
+- Descriptive test names: `test_<action>_<condition>`
+- Use fixtures for setup/teardown
+- Group related tests in classes
 
-Each test should be independent and not rely on other tests:
+### Async Testing
+- All async tests use `async def` and `await`
+- Use `pytest.mark.asyncio` (handled by pytest-asyncio)
+- Proper cleanup in fixtures with `yield`
 
-```python
-# ✅ Good: Independent test
-async def test_cache_set():
-    cache = MemoryCacheBackend()
-    await cache.set("key", "value")
-    assert await cache.exists("key")
+### Assertions
+- Use specific assertions (`assert x == y`, not `assert x`)
+- Test both success and failure cases
+- Verify stats/metadata after operations
 
-# ❌ Bad: Depends on previous test state
-async def test_cache_get():
-    # Assumes "key" exists from previous test
-    result = await cache.get("key")
-```
+### Mocking
+- Mock external dependencies (AI providers, network calls)
+- Use `pytest.MonkeyPatch` for environment variables
+- Create minimal, focused mocks
 
-### 2. Clear Test Names
+### Coverage Goals
+- Aim for >80% code coverage
+- Focus on critical paths and edge cases
+- Don't sacrifice readability for coverage
 
-Use descriptive names that explain what is being tested:
+## Troubleshooting
 
-```python
-# ✅ Good
-async def test_cache_returns_none_for_expired_keys()
+### Redis Connection Issues
+If Redis tests fail with connection errors:
+1. Ensure Redis is running: `redis-cli ping`
+2. Check connection: `redis-cli -h localhost -p 6379`
+3. Set custom URL: `export TEST_REDIS_URL=redis://your-host:6379/15`
+4. Tests auto-skip if Redis unavailable
 
-# ❌ Bad
-async def test_cache_1()
-```
+### Import Errors
+If you see import errors:
+1. Install test dependencies: `pip install -e ".[dev]"`
+2. Ensure you're in the project root
+3. Activate virtual environment: `source .venv/bin/activate`
 
-### 3. One Assertion Per Test (when possible)
+### Async Warnings
+If you see async warnings or errors:
+1. Ensure `pytest-asyncio` is installed
+2. Check that async tests use `async def`
+3. Verify fixtures use proper async/await patterns
 
-Focus each test on a single behavior:
-
-```python
-# ✅ Good
-async def test_set_stores_value():
-    cache = MemoryCacheBackend()
-    success = await cache.set("key", "value")
-    assert success is True
-
-async def test_get_retrieves_stored_value():
-    cache = MemoryCacheBackend()
-    await cache.set("key", "value")
-    result = await cache.get("key")
-    assert result == "value"
-
-# ❌ Less ideal
-async def test_set_and_get():
-    cache = MemoryCacheBackend()
-    assert await cache.set("key", "value")
-    assert await cache.get("key") == "value"
-    assert await cache.exists("key")
-    # Testing too many things at once
-```
-
-### 4. Use Fixtures for Common Setup
-
-```python
-@pytest.fixture
-async def cache_with_data():
-    """Cache pre-populated with test data."""
-    cache = MemoryCacheBackend()
-    await cache.set("key1", "value1")
-    await cache.set("key2", "value2")
-    return cache
-
-async def test_something(cache_with_data):
-    result = await cache_with_data.get("key1")
-    assert result == "value1"
-```
-
-### 5. Test Error Cases
-
-Don't just test the happy path:
-
-```python
-async def test_get_nonexistent_key_returns_none():
-    cache = MemoryCacheBackend()
-    result = await cache.get("nonexistent")
-    assert result is None
-
-async def test_invalid_ttl_raises_error():
-    cache = MemoryCacheBackend()
-    with pytest.raises(ValueError):
-        await cache.set("key", "value", ttl="invalid")
-```
-
----
-
-## Resources
-
-- [pytest Documentation](https://docs.pytest.org/)
-- [pytest-asyncio Documentation](https://pytest-asyncio.readthedocs.io/)
-- [Coverage.py Documentation](https://coverage.readthedocs.io/)
-- [SDD.md](../docs/SDD.md) — System design document
-- [PLUGIN_GUIDE.md](../docs/PLUGIN_GUIDE.md) — Plugin testing guidelines
-
----
+### Type Checker Warnings
+Type checker warnings about pytest decorators are expected and can be ignored:
+- `Untyped function decorator obscures type of function`
+- These are normal pytest fixture behavior
 
 ## Contributing
 
-When adding new features:
+When adding new tests:
+1. Follow existing patterns and naming conventions
+2. Add fixtures to `conftest.py` if reusable
+3. Include docstrings explaining what's being tested
+4. Test both happy paths and error conditions
+5. Run full test suite before committing
+6. Update this README if adding new test categories
 
-1. Write tests **before** implementation (TDD)
-2. Ensure tests pass locally
-3. Maintain ≥85% coverage for core modules
-4. Add integration tests for component interactions
-5. Update this README if adding new test patterns
+## Continuous Integration
 
----
+Tests run automatically on:
+- Pull request creation/updates
+- Pushes to main branch
+- Manual workflow dispatch
 
-**Happy Testing! 🧪**
+CI configuration: `.github/workflows/test.yml`
+
+## Performance
+
+Test suite performance targets:
+- Full suite: < 30 seconds
+- Unit tests: < 10 seconds
+- Integration tests: < 20 seconds
+- Individual test: < 1 second (except long-running integration tests)
+
+Slow tests are marked with `@pytest.mark.slow` for optional exclusion:
+```bash
+pytest tests/ -m "not slow"
+```
+
+## Additional Resources
+
+- [pytest documentation](https://docs.pytest.org/)
+- [pytest-asyncio documentation](https://pytest-asyncio.readthedocs.io/)
+- [Seraph MCP Contributing Guide](../CONTRIBUTING.md)
+- [Seraph MCP System Design Document](../docs/SDD.md)

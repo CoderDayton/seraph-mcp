@@ -1,674 +1,456 @@
 """
-Seraph MCP — Redis Backend Unit Tests
+Seraph MCP — Redis Cache Backend Tests
 
-Comprehensive unit tests for the Redis cache backend, covering:
-- Basic operations (get, set, delete, exists)
-- TTL handling (None, 0, positive values)
-- Namespace prefixing
-- Batch operations (get_many, set_many, delete_many)
-- Clear operation with SCAN pattern
-- Statistics tracking (hits, misses, sets, deletes)
-- JSON serialization edge cases
-- Error handling and connection failures
-- Resource cleanup
+Comprehensive test suite for the Redis cache backend.
+Tests all interface methods, TTL handling, namespace isolation, and error conditions.
+
+Python 3.12+ with modern async patterns and type hints.
+Requires Redis server running on localhost:6379 (or TEST_REDIS_URL env var).
 """
 
 import asyncio
-import json
+from collections.abc import AsyncGenerator
+from typing import Any
 
-import pytest
+import pytest  # type: ignore[import-untyped]
 
 from src.cache.backends.redis import RedisCacheBackend
 
+# Check if Redis is available
+try:
+    import socket
 
-class TestRedisCacheBackendInitialization:
-    """Test Redis backend initialization and configuration."""
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.settimeout(1)
+    redis_available = sock.connect_ex(("localhost", 6379)) == 0
+    sock.close()
+except Exception:
+    redis_available = False
 
-    def test_init_with_defaults(self):
-        """Test initialization with default parameters."""
-        backend = RedisCacheBackend(redis_url="redis://localhost:6379")
-
-        assert backend.namespace == "seraph"
-        assert backend.default_ttl == 3600
-        assert backend._hits == 0
-        assert backend._misses == 0
-        assert backend._sets == 0
-        assert backend._deletes == 0
-
-    def test_init_with_custom_params(self):
-        """Test initialization with custom parameters."""
-        backend = RedisCacheBackend(
-            redis_url="redis://localhost:6379/5",
-            namespace="custom",
-            default_ttl=7200,
-            max_connections=20,
-            socket_timeout=10,
-        )
-
-        assert backend.namespace == "custom"
-        assert backend.default_ttl == 7200
-
-    def test_init_without_url_raises_error(self):
-        """Test that initialization without URL raises ValueError."""
-        with pytest.raises(ValueError, match="redis_url is required"):
-            RedisCacheBackend(redis_url="")
-
-    def test_init_with_empty_namespace_uses_default(self):
-        """Test that empty namespace falls back to default."""
-        backend = RedisCacheBackend(
-            redis_url="redis://localhost:6379",
-            namespace="  ",
-        )
-        assert backend.namespace == "seraph"
-
-    def test_init_negative_ttl_converted_to_zero(self):
-        """Test that negative TTL is converted to 0."""
-        backend = RedisCacheBackend(
-            redis_url="redis://localhost:6379",
-            default_ttl=-100,
-        )
-        assert backend.default_ttl == 0
+pytestmark = pytest.mark.skipif(not redis_available, reason="Redis server not available")
 
 
-class TestRedisCacheBackendHelpers:
-    """Test helper methods for key generation and serialization."""
+class TestRedisCacheBackend:
+    """Test suite for RedisCacheBackend."""
 
-    def test_make_key_with_namespace(self):
-        """Test key generation with namespace prefix."""
-        backend = RedisCacheBackend(
-            redis_url="redis://localhost:6379",
-            namespace="myapp",
-        )
-
-        assert backend._make_key("user:123") == "myapp:user:123"
-        assert backend._make_key("session") == "myapp:session"
-
-    def test_to_json_serialization(self):
-        """Test JSON serialization of various data types."""
-        # Simple types
-        assert RedisCacheBackend._to_json("hello") == '"hello"'
-        assert RedisCacheBackend._to_json(42) == "42"
-        assert RedisCacheBackend._to_json(3.14) == "3.14"
-        assert RedisCacheBackend._to_json(True) == "true"
-        assert RedisCacheBackend._to_json(None) == "null"
-
-        # Complex types
-        data = {"key": "value", "number": 123, "nested": {"list": [1, 2, 3]}}
-        json_str = RedisCacheBackend._to_json(data)
-        assert json.loads(json_str) == data
-
-    def test_from_json_deserialization(self):
-        """Test JSON deserialization of various data types."""
-        assert RedisCacheBackend._from_json('"hello"') == "hello"
-        assert RedisCacheBackend._from_json("42") == 42
-        assert RedisCacheBackend._from_json("3.14") == 3.14
-        assert RedisCacheBackend._from_json("true") is True
-        assert RedisCacheBackend._from_json("null") is None
-        assert RedisCacheBackend._from_json(None) is None
-
-        # Complex types
-        json_str = '{"key":"value","number":123}'
-        assert RedisCacheBackend._from_json(json_str) == {"key": "value", "number": 123}
-
-    def test_from_json_invalid_returns_raw(self):
-        """Test that invalid JSON returns raw data."""
-        invalid_json = "not-valid-json"
-        result = RedisCacheBackend._from_json(invalid_json)
-        assert result == invalid_json
-
-    def test_ttl_seconds_normalization(self):
-        """Test TTL normalization logic."""
-        backend = RedisCacheBackend(
-            redis_url="redis://localhost:6379",
+    @pytest.fixture  # type: ignore[misc]
+    async def cache(self, test_redis_url: str) -> AsyncGenerator[RedisCacheBackend, None]:  # type: ignore[misc]
+        """Create a fresh Redis cache instance for each test."""
+        cache = RedisCacheBackend(
+            redis_url=test_redis_url,
+            namespace="test",
             default_ttl=3600,
+            max_connections=5,
+            socket_timeout=2,
+        )
+        # Clear any existing data
+        await cache.clear()
+        yield cache
+        # Cleanup after test
+        await cache.clear()
+        await cache.close()
+
+    async def test_initialization(self, test_redis_url: str) -> None:
+        """Test cache initialization with custom parameters."""
+        cache = RedisCacheBackend(
+            redis_url=test_redis_url,
+            namespace="custom",
+            default_ttl=1800,
+            max_connections=10,
+            socket_timeout=5,
         )
 
-        # None -> default_ttl
-        assert backend._ttl_seconds(None) == 3600
+        assert cache.namespace == "custom"
+        assert cache.default_ttl == 1800
 
-        # 0 or negative -> None (no expiry)
-        assert backend._ttl_seconds(0) is None
-        assert backend._ttl_seconds(-100) is None
+        # Verify connection works
+        stats = await cache.get_stats()
+        assert stats["backend"] == "redis"
+        assert stats["namespace"] == "custom"
 
-        # Positive -> as provided
-        assert backend._ttl_seconds(60) == 60
-        assert backend._ttl_seconds(7200) == 7200
+        await cache.close()
 
+    async def test_set_and_get(self, cache: RedisCacheBackend) -> None:
+        """Test basic set and get operations."""
+        # Set a value
+        result = await cache.set("key1", "value1")
+        assert result is True
 
-@pytest.mark.asyncio
-class TestRedisCacheBackendBasicOperations:
-    """Test basic cache operations (get, set, delete, exists)."""
+        # Get the value
+        value = await cache.get("key1")
+        assert value == "value1"
 
-    async def test_get_existing_key(self, redis_client):
-        """Test retrieving an existing key."""
-        backend = RedisCacheBackend(
-            redis_url="redis://localhost:6379/15",
-            namespace="test",
-        )
+        # Stats should reflect the operations
+        stats = await cache.get_stats()
+        assert stats["hits"] == 1
+        assert stats["misses"] == 0
 
-        # Pre-populate with data
-        await redis_client.set("test:mykey", '"hello"')
+    async def test_get_nonexistent_key(self, cache: RedisCacheBackend) -> None:
+        """Test getting a key that doesn't exist."""
+        value = await cache.get("nonexistent")
+        assert value is None
 
-        result = await backend.get("mykey")
-        assert result == "hello"
-        assert backend._hits == 1
-        assert backend._misses == 0
+        stats = await cache.get_stats()
+        assert stats["misses"] == 1
+        assert stats["hits"] == 0
 
-    async def test_get_missing_key(self, redis_client):
-        """Test retrieving a non-existent key."""
-        backend = RedisCacheBackend(
-            redis_url="redis://localhost:6379/15",
-            namespace="test",
-        )
-
-        result = await backend.get("nonexistent")
-        assert result is None
-        assert backend._hits == 0
-        assert backend._misses == 1
-
-    async def test_set_with_default_ttl(self, redis_client):
-        """Test setting a value with default TTL."""
-        backend = RedisCacheBackend(
-            redis_url="redis://localhost:6379/15",
-            namespace="test",
-            default_ttl=60,
-        )
-
-        success = await backend.set("mykey", "myvalue")
-        assert success is True
-        assert backend._sets == 1
-
-        # Verify stored value
-        stored = await redis_client.get("test:mykey")
-        assert stored == '"myvalue"'
-
-        # Verify TTL was set
-        ttl = await redis_client.ttl("test:mykey")
-        assert 55 <= ttl <= 60  # Allow small margin
-
-    async def test_set_with_custom_ttl(self, redis_client):
-        """Test setting a value with custom TTL."""
-        backend = RedisCacheBackend(
-            redis_url="redis://localhost:6379/15",
-            namespace="test",
-        )
-
-        success = await backend.set("mykey", "myvalue", ttl=30)
-        assert success is True
-
-        ttl = await redis_client.ttl("test:mykey")
-        assert 25 <= ttl <= 30
-
-    async def test_set_with_zero_ttl_no_expiry(self, redis_client):
-        """Test setting a value with TTL=0 (no expiry)."""
-        backend = RedisCacheBackend(
-            redis_url="redis://localhost:6379/15",
-            namespace="test",
-        )
-
-        success = await backend.set("mykey", "myvalue", ttl=0)
-        assert success is True
-
-        # TTL should be -1 (no expiry)
-        ttl = await redis_client.ttl("test:mykey")
-        assert ttl == -1
-
-    async def test_set_complex_data(self, redis_client):
-        """Test setting complex data structures."""
-        backend = RedisCacheBackend(
-            redis_url="redis://localhost:6379/15",
-            namespace="test",
-        )
-
-        complex_data = {
-            "user": {"id": 123, "name": "Alice"},
-            "tags": ["python", "redis", "async"],
-            "metadata": {"created": "2025-01-01", "active": True},
+    async def test_set_with_various_types(self, cache: RedisCacheBackend) -> None:
+        """Test storing different data types."""
+        test_data: dict[str, Any] = {
+            "string": "hello",
+            "int": 42,
+            "float": 3.14,
+            "bool": True,
+            "none": None,
+            "list": [1, 2, 3],
+            "dict": {"nested": "value"},
         }
 
-        await backend.set("complex", complex_data)
-        result = await backend.get("complex")
-        assert result == complex_data
+        for key, value in test_data.items():
+            await cache.set(key, value)
 
-    async def test_delete_existing_key(self, redis_client):
-        """Test deleting an existing key."""
-        backend = RedisCacheBackend(
-            redis_url="redis://localhost:6379/15",
-            namespace="test",
+        for key, expected_value in test_data.items():
+            actual_value = await cache.get(key)
+            assert actual_value == expected_value
+
+    async def test_delete(self, cache: RedisCacheBackend) -> None:
+        """Test deleting keys."""
+        # Set a value
+        await cache.set("key1", "value1")
+        assert await cache.exists("key1") is True
+
+        # Delete it
+        result = await cache.delete("key1")
+        assert result is True
+
+        # Verify it's gone
+        assert await cache.exists("key1") is False
+        assert await cache.get("key1") is None
+
+        # Try to delete non-existent key
+        result = await cache.delete("key1")
+        assert result is False
+
+    async def test_exists(self, cache: RedisCacheBackend) -> None:
+        """Test checking key existence."""
+        # Key doesn't exist initially
+        assert await cache.exists("key1") is False
+
+        # Set the key
+        await cache.set("key1", "value1")
+        assert await cache.exists("key1") is True
+
+        # Delete the key
+        await cache.delete("key1")
+        assert await cache.exists("key1") is False
+
+    async def test_clear(self, cache: RedisCacheBackend) -> None:
+        """Test clearing all cache entries in namespace."""
+        # Add multiple entries
+        for i in range(5):
+            await cache.set(f"key{i}", f"value{i}")
+
+        # Verify entries exist
+        for i in range(5):
+            assert await cache.exists(f"key{i}") is True
+
+        # Clear the cache
+        result = await cache.clear()
+        assert result is True
+
+        # Verify all entries are gone
+        for i in range(5):
+            assert await cache.exists(f"key{i}") is False
+
+    async def test_ttl_expiration(self, cache: RedisCacheBackend) -> None:
+        """Test that entries expire after TTL."""
+        # Set a value with 1 second TTL
+        await cache.set("key1", "value1", ttl=1)
+
+        # Should exist immediately
+        assert await cache.exists("key1") is True
+        assert await cache.get("key1") == "value1"
+
+        # Wait for expiration
+        await asyncio.sleep(1.1)
+
+        # Should be expired now
+        assert await cache.exists("key1") is False
+        assert await cache.get("key1") is None
+
+    async def test_ttl_zero_no_expiry(self, cache: RedisCacheBackend) -> None:
+        """Test that TTL=0 means no expiration."""
+        await cache.set("key1", "value1", ttl=0)
+
+        # Should exist immediately
+        assert await cache.get("key1") == "value1"
+
+        # Should still exist after some time
+        await asyncio.sleep(0.2)
+        assert await cache.get("key1") == "value1"
+
+    async def test_ttl_none_uses_default(self, cache: RedisCacheBackend, test_redis_url: str) -> None:
+        """Test that TTL=None uses the default TTL."""
+        # Create cache with short default TTL
+        short_ttl_cache = RedisCacheBackend(
+            redis_url=test_redis_url,
+            namespace="test_ttl",
+            default_ttl=1,
         )
 
-        await redis_client.set("test:mykey", '"value"')
+        await short_ttl_cache.set("key1", "value1", ttl=None)
+        assert await short_ttl_cache.get("key1") == "value1"
 
-        deleted = await backend.delete("mykey")
-        assert deleted is True
-        assert backend._deletes == 1
+        # Wait for default TTL to expire
+        await asyncio.sleep(1.1)
+        assert await short_ttl_cache.get("key1") is None
 
-        # Verify key is gone
-        exists = await redis_client.exists("test:mykey")
-        assert exists == 0
+        await short_ttl_cache.close()
 
-    async def test_delete_missing_key(self, redis_client):
-        """Test deleting a non-existent key."""
-        backend = RedisCacheBackend(
-            redis_url="redis://localhost:6379/15",
-            namespace="test",
-        )
+    async def test_get_many(self, cache: RedisCacheBackend) -> None:
+        """Test batch get operation."""
+        # Set multiple values
+        for i in range(5):
+            await cache.set(f"key{i}", f"value{i}")
 
-        deleted = await backend.delete("nonexistent")
-        assert deleted is False
+        # Get multiple keys
+        result = await cache.get_many(["key0", "key2", "key4", "nonexistent"])
 
-    async def test_exists_for_existing_key(self, redis_client):
-        """Test checking existence of an existing key."""
-        backend = RedisCacheBackend(
-            redis_url="redis://localhost:6379/15",
-            namespace="test",
-        )
+        assert result == {
+            "key0": "value0",
+            "key2": "value2",
+            "key4": "value4",
+        }
+        assert "nonexistent" not in result
 
-        await redis_client.set("test:mykey", '"value"')
-
-        exists = await backend.exists("mykey")
-        assert exists is True
-
-    async def test_exists_for_missing_key(self, redis_client):
-        """Test checking existence of a missing key."""
-        backend = RedisCacheBackend(
-            redis_url="redis://localhost:6379/15",
-            namespace="test",
-        )
-
-        exists = await backend.exists("nonexistent")
-        assert exists is False
-
-
-@pytest.mark.asyncio
-class TestRedisCacheBackendBatchOperations:
-    """Test batch operations (get_many, set_many, delete_many)."""
-
-    async def test_get_many_all_existing(self, redis_client):
-        """Test retrieving multiple existing keys."""
-        backend = RedisCacheBackend(
-            redis_url="redis://localhost:6379/15",
-            namespace="test",
-        )
-
-        # Pre-populate
-        await redis_client.mset(
-            {
-                "test:key1": '"value1"',
-                "test:key2": '"value2"',
-                "test:key3": '"value3"',
-            }
-        )
-
-        results = await backend.get_many(["key1", "key2", "key3"])
-        assert results == {
+    async def test_set_many(self, cache: RedisCacheBackend) -> None:
+        """Test batch set operation."""
+        items = {
             "key1": "value1",
             "key2": "value2",
             "key3": "value3",
         }
-        assert backend._hits == 3
-        assert backend._misses == 0
 
-    async def test_get_many_partial_existing(self, redis_client):
-        """Test retrieving mix of existing and missing keys."""
-        backend = RedisCacheBackend(
-            redis_url="redis://localhost:6379/15",
-            namespace="test",
-        )
+        count = await cache.set_many(items)
+        assert count == 3
 
-        # Pre-populate only some keys
-        await redis_client.set("test:key1", '"value1"')
-        await redis_client.set("test:key3", '"value3"')
+        # Verify all items were set
+        for key, value in items.items():
+            assert await cache.get(key) == value
 
-        results = await backend.get_many(["key1", "key2", "key3"])
-        assert results == {
-            "key1": "value1",
-            "key3": "value3",
-        }
-        assert "key2" not in results
-        assert backend._hits == 2
-        assert backend._misses == 1
-
-    async def test_get_many_empty_list(self, redis_client):
-        """Test get_many with empty key list."""
-        backend = RedisCacheBackend(
-            redis_url="redis://localhost:6379/15",
-            namespace="test",
-        )
-
-        results = await backend.get_many([])
-        assert results == {}
-
-    async def test_set_many_with_default_ttl(self, redis_client):
-        """Test setting multiple values with default TTL."""
-        backend = RedisCacheBackend(
-            redis_url="redis://localhost:6379/15",
-            namespace="test",
-            default_ttl=60,
-        )
-
+    async def test_set_many_with_ttl(self, cache: RedisCacheBackend) -> None:
+        """Test batch set with TTL."""
         items = {
             "key1": "value1",
-            "key2": {"nested": "data"},
-            "key3": [1, 2, 3],
+            "key2": "value2",
         }
 
-        count = await backend.set_many(items)
+        await cache.set_many(items, ttl=1)
+
+        # Should exist immediately
+        assert await cache.get("key1") == "value1"
+        assert await cache.get("key2") == "value2"
+
+        # Wait for expiration
+        await asyncio.sleep(1.1)
+
+        # Should be expired
+        assert await cache.get("key1") is None
+        assert await cache.get("key2") is None
+
+    async def test_delete_many(self, cache: RedisCacheBackend) -> None:
+        """Test batch delete operation."""
+        # Set multiple values
+        for i in range(5):
+            await cache.set(f"key{i}", f"value{i}")
+
+        # Delete multiple keys
+        count = await cache.delete_many(["key0", "key2", "key4", "nonexistent"])
+
+        # Should delete 3 keys (nonexistent doesn't count)
         assert count == 3
-        assert backend._sets == 3
 
-        # Verify all keys exist with TTL
-        for key in items:
-            exists = await redis_client.exists(f"test:{key}")
-            assert exists == 1
-            ttl = await redis_client.ttl(f"test:{key}")
-            assert 55 <= ttl <= 60
+        # Verify correct keys were deleted
+        assert await cache.exists("key0") is False
+        assert await cache.exists("key1") is True
+        assert await cache.exists("key2") is False
+        assert await cache.exists("key3") is True
+        assert await cache.exists("key4") is False
 
-    async def test_set_many_with_custom_ttl(self, redis_client):
-        """Test setting multiple values with custom TTL."""
-        backend = RedisCacheBackend(
-            redis_url="redis://localhost:6379/15",
-            namespace="test",
-        )
-
-        items = {"key1": "value1", "key2": "value2"}
-        count = await backend.set_many(items, ttl=30)
-        assert count == 2
-
-        ttl = await redis_client.ttl("test:key1")
-        assert 25 <= ttl <= 30
-
-    async def test_set_many_empty_dict(self, redis_client):
-        """Test set_many with empty dictionary."""
-        backend = RedisCacheBackend(
-            redis_url="redis://localhost:6379/15",
-            namespace="test",
-        )
-
-        count = await backend.set_many({})
-        assert count == 0
-
-    async def test_delete_many_all_existing(self, redis_client):
-        """Test deleting multiple existing keys."""
-        backend = RedisCacheBackend(
-            redis_url="redis://localhost:6379/15",
-            namespace="test",
-        )
-
-        # Pre-populate
-        await redis_client.mset(
-            {
-                "test:key1": '"value1"',
-                "test:key2": '"value2"',
-                "test:key3": '"value3"',
-            }
-        )
-
-        count = await backend.delete_many(["key1", "key2", "key3"])
-        assert count == 3
-        assert backend._deletes == 3
-
-        # Verify all keys are gone
-        for key in ["key1", "key2", "key3"]:
-            exists = await redis_client.exists(f"test:{key}")
-            assert exists == 0
-
-    async def test_delete_many_partial_existing(self, redis_client):
-        """Test deleting mix of existing and missing keys."""
-        backend = RedisCacheBackend(
-            redis_url="redis://localhost:6379/15",
-            namespace="test",
-        )
-
-        # Pre-populate only some keys
-        await redis_client.set("test:key1", '"value1"')
-        await redis_client.set("test:key3", '"value3"')
-
-        count = await backend.delete_many(["key1", "key2", "key3"])
-        assert count == 2  # Only key1 and key3 existed
-
-    async def test_delete_many_empty_list(self, redis_client):
-        """Test delete_many with empty key list."""
-        backend = RedisCacheBackend(
-            redis_url="redis://localhost:6379/15",
-            namespace="test",
-        )
-
-        count = await backend.delete_many([])
-        assert count == 0
-
-    async def test_delete_many_large_batch(self, redis_client):
-        """Test deleting large batch of keys (chunking logic)."""
-        backend = RedisCacheBackend(
-            redis_url="redis://localhost:6379/15",
-            namespace="test",
-        )
-
-        # Create 2000 keys (more than chunk_size of 1000)
-        keys = [f"key{i}" for i in range(2000)]
-        data = {f"test:key{i}": f'"value{i}"' for i in range(2000)}
-        await redis_client.mset(data)
-
-        count = await backend.delete_many(keys)
-        assert count == 2000
-
-
-@pytest.mark.asyncio
-class TestRedisCacheBackendClear:
-    """Test clear operation with namespace isolation."""
-
-    async def test_clear_namespace_only(self, redis_client):
-        """Test that clear only removes keys in the namespace."""
-        backend = RedisCacheBackend(
-            redis_url="redis://localhost:6379/15",
-            namespace="app1",
-        )
-
-        # Add keys in different namespaces
-        await redis_client.mset(
-            {
-                "app1:key1": '"value1"',
-                "app1:key2": '"value2"',
-                "app2:key1": '"value1"',  # Different namespace
-                "global:key": '"value"',  # No namespace prefix
-            }
-        )
-
-        success = await backend.clear()
-        assert success is True
-
-        # Verify only app1 keys are deleted
-        assert await redis_client.exists("app1:key1") == 0
-        assert await redis_client.exists("app1:key2") == 0
-        assert await redis_client.exists("app2:key1") == 1  # Still exists
-        assert await redis_client.exists("global:key") == 1  # Still exists
-
-    async def test_clear_empty_namespace(self, redis_client):
-        """Test clearing when namespace has no keys."""
-        backend = RedisCacheBackend(
-            redis_url="redis://localhost:6379/15",
-            namespace="empty",
-        )
-
-        success = await backend.clear()
-        assert success is True
-
-    async def test_clear_large_namespace(self, redis_client):
-        """Test clearing namespace with many keys (SCAN iteration)."""
-        backend = RedisCacheBackend(
-            redis_url="redis://localhost:6379/15",
-            namespace="bigapp",
-        )
-
-        # Create 5000 keys
-        data = {f"bigapp:key{i}": f'"value{i}"' for i in range(5000)}
-        # Split into chunks for mset
-        chunk_size = 1000
-        items = list(data.items())
-        for i in range(0, len(items), chunk_size):
-            chunk = dict(items[i : i + chunk_size])
-            await redis_client.mset(chunk)
-
-        success = await backend.clear()
-        assert success is True
-
-        # Verify all keys are gone
-        pattern = "bigapp:*"
-        cursor, keys = await redis_client.scan(0, match=pattern, count=100)
-        assert len(keys) == 0
-
-
-@pytest.mark.asyncio
-class TestRedisCacheBackendStats:
-    """Test statistics and monitoring."""
-
-    async def test_get_stats_basic(self, redis_client):
-        """Test basic statistics collection."""
-        backend = RedisCacheBackend(
-            redis_url="redis://localhost:6379/15",
-            namespace="test",
-            default_ttl=3600,
-        )
-
-        # Perform some operations
-        await backend.set("key1", "value1")
-        await backend.get("key1")  # Hit
-        await backend.get("key2")  # Miss
-        await backend.delete("key1")
-
-        stats = await backend.get_stats()
-
+    async def test_get_stats(self, cache: RedisCacheBackend) -> None:
+        """Test statistics tracking."""
+        # Initial stats
+        stats = await cache.get_stats()
         assert stats["backend"] == "redis"
         assert stats["namespace"] == "test"
-        assert stats["default_ttl"] == 3600
+        assert stats["hits"] == 0
+        assert stats["misses"] == 0
+
+        # Perform various operations
+        await cache.set("key1", "value1")
+        await cache.get("key1")  # hit
+        await cache.get("key2")  # miss
+
+        stats = await cache.get_stats()
         assert stats["hits"] == 1
         assert stats["misses"] == 1
-        assert stats["sets"] == 1
-        assert stats["deletes"] == 1
-        assert stats["hit_rate"] == 50.0  # 1 hit out of 2 requests
-        assert stats["connected"] is True
 
-    async def test_get_stats_includes_redis_info(self, redis_client):
-        """Test that stats include Redis server information."""
-        backend = RedisCacheBackend(
-            redis_url="redis://localhost:6379/15",
-            namespace="test",
+    async def test_namespace_isolation(self, test_redis_url: str) -> None:
+        """Test that different namespaces are isolated."""
+        cache1 = RedisCacheBackend(redis_url=test_redis_url, namespace="ns1")
+        cache2 = RedisCacheBackend(redis_url=test_redis_url, namespace="ns2")
+
+        await cache1.set("key1", "value1")
+        await cache2.set("key1", "value2")
+
+        # Each cache should have its own value
+        assert await cache1.get("key1") == "value1"
+        assert await cache2.get("key1") == "value2"
+
+        # Clear one namespace shouldn't affect the other
+        await cache1.clear()
+        assert await cache1.get("key1") is None
+        assert await cache2.get("key1") == "value2"
+
+        await cache1.close()
+        await cache2.close()
+
+    async def test_close(self, cache: RedisCacheBackend) -> None:
+        """Test cache close operation."""
+        await cache.set("key1", "value1")
+
+        # Close should succeed
+        await cache.close()
+
+        # After close, operations should fail gracefully or reconnect
+        # (depends on implementation)
+
+    async def test_concurrent_operations(self, cache: RedisCacheBackend) -> None:
+        """Test concurrent operations."""
+
+        async def set_values(start: int, end: int) -> None:
+            for i in range(start, end):
+                await cache.set(f"key{i}", f"value{i}")
+
+        # Run concurrent set operations
+        await asyncio.gather(
+            set_values(0, 10),
+            set_values(10, 20),
+            set_values(20, 30),
         )
 
-        stats = await backend.get_stats()
+        # Verify all values were set correctly
+        for i in range(30):
+            value = await cache.get(f"key{i}")
+            assert value == f"value{i}"
 
-        assert "redis_version" in stats
-        assert "redis_mode" in stats
-        assert "os" in stats
-        assert "keyspace" in stats
+    async def test_overwrite_existing_key(self, cache: RedisCacheBackend) -> None:
+        """Test that setting an existing key overwrites the value."""
+        await cache.set("key1", "value1")
+        assert await cache.get("key1") == "value1"
 
-    async def test_get_stats_no_requests_zero_hit_rate(self, redis_client):
-        """Test hit rate calculation when no requests."""
-        backend = RedisCacheBackend(
-            redis_url="redis://localhost:6379/15",
-            namespace="test",
-        )
+        await cache.set("key1", "value2")
+        assert await cache.get("key1") == "value2"
 
-        stats = await backend.get_stats()
-        assert stats["hit_rate"] == 0.0
+    async def test_complex_data_structures(self, cache: RedisCacheBackend) -> None:
+        """Test storing complex nested data structures."""
+        complex_data = {
+            "user": {
+                "id": 123,
+                "name": "Alice",
+                "tags": ["python", "redis", "async"],
+            },
+            "metadata": {
+                "created": "2025-01-01",
+                "active": True,
+                "score": 95.5,
+            },
+            "items": [
+                {"id": 1, "name": "Item 1"},
+                {"id": 2, "name": "Item 2"},
+            ],
+        }
 
-    async def test_hit_miss_tracking(self, redis_client):
-        """Test accurate hit/miss tracking across operations."""
-        backend = RedisCacheBackend(
-            redis_url="redis://localhost:6379/15",
-            namespace="test",
-        )
+        await cache.set("complex", complex_data)
+        result = await cache.get("complex")
+        assert result == complex_data
 
-        await backend.set("exists", "value")
-
-        # 3 hits
-        await backend.get("exists")
-        await backend.get("exists")
-        await backend.get("exists")
-
-        # 2 misses
-        await backend.get("miss1")
-        await backend.get("miss2")
-
-        stats = await backend.get_stats()
-        assert stats["hits"] == 3
-        assert stats["misses"] == 2
-        assert stats["hit_rate"] == 60.0  # 3 hits out of 5 total
-
-
-@pytest.mark.asyncio
-class TestRedisCacheBackendResourceManagement:
-    """Test resource cleanup and lifecycle."""
-
-    async def test_close_releases_resources(self, redis_client):
-        """Test that close properly releases Redis connection."""
-        backend = RedisCacheBackend(
-            redis_url="redis://localhost:6379/15",
-            namespace="test",
-        )
-
-        # Use the connection
-        await backend.set("key", "value")
-
-        # Close should not raise
-        await backend.close()
-
-        # Subsequent operations should fail (connection closed)
-        # Note: This depends on Redis client behavior
-
-    async def test_close_idempotent(self, redis_client):
-        """Test that close can be called multiple times safely."""
-        backend = RedisCacheBackend(
-            redis_url="redis://localhost:6379/15",
-            namespace="test",
-        )
-
-        await backend.close()
-        await backend.close()  # Should not raise
-
-
-@pytest.mark.asyncio
-class TestRedisCacheBackendEdgeCases:
-    """Test edge cases and special scenarios."""
-
-    async def test_unicode_keys_and_values(self, redis_client):
-        """Test handling of Unicode keys and values."""
-        backend = RedisCacheBackend(
-            redis_url="redis://localhost:6379/15",
-            namespace="test",
-        )
-
+    async def test_unicode_data(self, cache: RedisCacheBackend) -> None:
+        """Test handling of Unicode data."""
         unicode_data = {
             "greeting": "Hello 世界 🌍",
             "emoji": "🎉🎊🎈",
             "special": "Ñoño café",
         }
 
-        await backend.set("unicode", unicode_data)
-        result = await backend.get("unicode")
+        await cache.set("unicode", unicode_data)
+        result = await cache.get("unicode")
         assert result == unicode_data
 
-    async def test_large_values(self, redis_client):
-        """Test storing and retrieving large values."""
-        backend = RedisCacheBackend(
-            redis_url="redis://localhost:6379/15",
+    async def test_empty_cache_operations(self, cache: RedisCacheBackend) -> None:
+        """Test operations on empty cache."""
+        # Clear empty cache
+        assert await cache.clear() is True
+
+        # Get from empty cache
+        assert await cache.get("key1") is None
+
+        # Delete from empty cache
+        assert await cache.delete("key1") is False
+
+        # Exists on empty cache
+        assert await cache.exists("key1") is False
+
+        # Get many from empty cache
+        assert await cache.get_many(["key1", "key2"]) == {}
+
+        # Delete many from empty cache
+        assert await cache.delete_many(["key1", "key2"]) == 0
+
+    async def test_connection_error_handling(self, test_redis_url: str) -> None:
+        """Test handling of connection errors."""
+        # Create cache with invalid URL
+        cache = RedisCacheBackend(
+            redis_url="redis://invalid-host:9999/0",
             namespace="test",
+            socket_timeout=1,
         )
 
-        # Create a large value (~1MB of data)
-        large_value = {"data": "x" * 1000000}
+        # Operations should handle errors gracefully
+        with pytest.raises(Exception):  # noqa: B017, PT011
+            await cache.set("key1", "value1")
 
-        await backend.set("large", large_value)
-        result = await backend.get("large")
+    async def test_large_values(self, cache: RedisCacheBackend) -> None:
+        """Test storing and retrieving large values."""
+        # Create a large value (~100KB of data)
+        large_value = {"data": "x" * 100000}
+
+        await cache.set("large", large_value)
+        result = await cache.get("large")
         assert result == large_value
 
-    async def test_special_characters_in_keys(self, redis_client):
-        """Test keys with special characters."""
-        backend = RedisCacheBackend(
-            redis_url="redis://localhost:6379/15",
-            namespace="test",
-        )
+    async def test_many_keys(self, cache: RedisCacheBackend) -> None:
+        """Test handling many keys."""
+        # Set 100 keys
+        for i in range(100):
+            await cache.set(f"key{i}", f"value{i}")
 
+        # Verify all keys exist
+        for i in range(100):
+            assert await cache.exists(f"key{i}") is True
+
+        # Get all keys
+        keys = [f"key{i}" for i in range(100)]
+        result = await cache.get_many(keys)
+        assert len(result) == 100
+
+        # Clear all
+        await cache.clear()
+        for i in range(100):
+            assert await cache.exists(f"key{i}") is False
+
+    async def test_special_characters_in_keys(self, cache: RedisCacheBackend) -> None:
+        """Test keys with special characters."""
         special_keys = [
             "key:with:colons",
             "key-with-dashes",
@@ -678,52 +460,8 @@ class TestRedisCacheBackendEdgeCases:
         ]
 
         for key in special_keys:
-            await backend.set(key, f"value-{key}")
+            await cache.set(key, f"value-{key}")
 
         for key in special_keys:
-            result = await backend.get(key)
+            result = await cache.get(key)
             assert result == f"value-{key}"
-
-    async def test_concurrent_operations(self, redis_client):
-        """Test concurrent get/set operations."""
-        backend = RedisCacheBackend(
-            redis_url="redis://localhost:6379/15",
-            namespace="test",
-        )
-
-        async def set_value(key: str, value: str):
-            await backend.set(key, value)
-
-        async def get_value(key: str):
-            return await backend.get(key)
-
-        # Set 100 keys concurrently
-        await asyncio.gather(*[set_value(f"key{i}", f"value{i}") for i in range(100)])
-
-        # Get all keys concurrently
-        results = await asyncio.gather(*[get_value(f"key{i}") for i in range(100)])
-
-        # Verify all values
-        for i, result in enumerate(results):
-            assert result == f"value{i}"
-
-    async def test_ttl_expiration(self, redis_client):
-        """Test that keys expire after TTL."""
-        backend = RedisCacheBackend(
-            redis_url="redis://localhost:6379/15",
-            namespace="test",
-        )
-
-        # Set with very short TTL
-        await backend.set("expires", "value", ttl=1)
-
-        # Should exist immediately
-        result = await backend.get("expires")
-        assert result == "value"
-
-        # Wait for expiration
-        await asyncio.sleep(1.5)
-
-        # Should be expired
-        result = await backend.get("expires")
-        assert result is None

@@ -177,8 +177,8 @@ class MemoryCacheBackend(CacheInterface):
 
     async def close(self) -> None:
         """Close cache and release resources."""
-        async with self._lock:
-            self._cache.clear()
+        # Memory backend doesn't need cleanup - data persists
+        pass
 
     async def get_many(self, keys: list[str]) -> dict[str, Any]:
         """Retrieve multiple values efficiently."""

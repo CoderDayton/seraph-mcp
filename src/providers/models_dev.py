@@ -130,7 +130,8 @@ class ModelsDevClient:
             RuntimeError: If loading fails
         """
         if not force_refresh and self._is_cache_valid():
-            return self._cache
+            if self._cache is not None:
+                return self._cache
 
         logger.info("Fetching provider data from models.dev API...")
 

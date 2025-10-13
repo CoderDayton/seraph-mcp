@@ -15,6 +15,7 @@ import logging
 import statistics
 import time
 from datetime import datetime
+from typing import Any
 
 from .tracker import BudgetTracker
 
@@ -42,7 +43,7 @@ class BudgetAnalytics:
         self,
         days_ahead: int = 7,
         historical_days: int = 30,
-    ) -> dict[str, any]:
+    ) -> dict[str, Any]:
         """
         Forecast future spending using simple linear projection.
 
@@ -132,7 +133,7 @@ class BudgetAnalytics:
     def analyze_spending_patterns(
         self,
         days: int = 30,
-    ) -> dict[str, any]:
+    ) -> dict[str, Any]:
         """
         Analyze spending patterns over time.
 
@@ -178,7 +179,7 @@ class BudgetAnalytics:
         self,
         baseline_cost: float,
         optimized_cost: float,
-    ) -> dict[str, any]:
+    ) -> dict[str, Any]:
         """
         Calculate cost savings from optimizations.
 
@@ -203,7 +204,7 @@ class BudgetAnalytics:
     def get_cost_breakdown(
         self,
         period: str = "month",
-    ) -> dict[str, any]:
+    ) -> dict[str, Any]:
         """
         Get detailed cost breakdown.
 
@@ -246,7 +247,7 @@ class BudgetAnalytics:
         self,
         period1: str = "week",
         period2: str = "month",
-    ) -> dict[str, any]:
+    ) -> dict[str, Any]:
         """
         Compare spending across different time periods.
 
@@ -294,7 +295,7 @@ class BudgetAnalytics:
         self,
         report_type: str = "summary",
         days: int = 30,
-    ) -> dict[str, any]:
+    ) -> dict[str, Any]:
         """
         Generate comprehensive spending report.
 

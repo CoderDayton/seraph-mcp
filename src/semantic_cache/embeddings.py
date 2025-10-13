@@ -127,6 +127,8 @@ class EmbeddingGenerator:
 
     def _generate_local(self, text: str) -> list[float]:
         """Generate embedding using local sentence-transformers model."""
+        if self._local_model is None:
+            raise RuntimeError("Local model not initialized")
         try:
             embedding = self._local_model.encode(text, convert_to_numpy=True)
             return embedding.tolist()
@@ -144,9 +146,11 @@ class EmbeddingGenerator:
 
     async def _generate_openai_embedding(self, text: str) -> list[float]:
         """Generate embedding using OpenAI embeddings API."""
+        if self._provider is None or not hasattr(self._provider, "client"):
+            raise RuntimeError("OpenAI provider not initialized")
         try:
             # Use OpenAI's embeddings endpoint directly
-            response = await self._provider.client.embeddings.create(
+            response = await self._provider.client.embeddings.create(  # type: ignore[attr-defined]
                 model=self.model_name,
                 input=text,
             )
@@ -156,9 +160,11 @@ class EmbeddingGenerator:
 
     async def _generate_compatible_embedding(self, text: str) -> list[float]:
         """Generate embedding using OpenAI-compatible endpoint."""
+        if self._provider is None or not hasattr(self._provider, "client"):
+            raise RuntimeError("OpenAI-compatible provider not initialized")
         try:
             # OpenAI-compatible endpoints support embeddings too
-            response = await self._provider.client.embeddings.create(
+            response = await self._provider.client.embeddings.create(  # type: ignore[attr-defined]
                 model=self.model_name,
                 input=text,
             )
@@ -188,6 +194,8 @@ class EmbeddingGenerator:
 
     def _generate_local_batch(self, texts: list[str]) -> list[list[float]]:
         """Generate embeddings in batch using local model."""
+        if self._local_model is None:
+            raise RuntimeError("Local model not initialized")
         try:
             embeddings = self._local_model.encode(texts, convert_to_numpy=True)
             return embeddings.tolist()
@@ -202,7 +210,10 @@ class EmbeddingGenerator:
             Embedding dimension
         """
         if self.provider_name == "local":
-            return self._local_model.get_sentence_embedding_dimension()
+            if self._local_model is None:
+                raise RuntimeError("Local model not initialized")
+            dim = self._local_model.get_sentence_embedding_dimension()
+            return dim if dim is not None else 384  # Default dimension
         elif self.provider_name == "openai":
             # OpenAI embedding dimensions
             dims = {

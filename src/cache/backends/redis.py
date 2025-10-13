@@ -220,7 +220,7 @@ class RedisCacheBackend(CacheInterface):
     async def close(self) -> None:
         """Close the Redis client and release resources."""
         try:
-            await self._client.close()
+            await self._client.aclose()
         finally:
             # Ensure pool disconnect
             try:

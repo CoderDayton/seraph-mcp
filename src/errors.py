@@ -121,10 +121,11 @@ class ProviderRateLimitError(ProviderError):
 
     def __init__(self, provider: str, retry_after: int | None = None):
         message = f"Provider {provider} rate limit exceeded"
-        details = {"provider": provider}
+        details: dict[str, Any] = {"provider": provider}
         if retry_after:
             details["retry_after"] = retry_after
-        super().__init__(message, details, status_code=429)
+        super().__init__(message, details)
+        self.status_code = 429
 
 
 class ValidationError(SeraphError):

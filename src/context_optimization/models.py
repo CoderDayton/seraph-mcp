@@ -4,9 +4,9 @@ Context Optimization Models
 Minimal data models for AI-powered context optimization.
 """
 
-from datetime import datetime
+from datetime import UTC, datetime
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class OptimizationResult(BaseModel):
@@ -37,11 +37,10 @@ class OptimizationResult(BaseModel):
     method: str = Field(default="ai", description="Compression method used: 'ai', 'seraph', or 'hybrid'")
 
     # Metadata
-    timestamp: datetime = Field(default_factory=datetime.utcnow, description="When optimized")
+    timestamp: datetime = Field(default=datetime.now(UTC), description="When optimized")
     rollback_occurred: bool = Field(default=False, description="Whether rollback happened")
 
-    class Config:
-        frozen = False
+    model_config = ConfigDict(frozen=False)
 
 
 class FeedbackRecord(BaseModel):
@@ -64,7 +63,6 @@ class FeedbackRecord(BaseModel):
     success_score: float = Field(..., ge=0, le=1, description="Overall success (0-1)")
 
     # Metadata
-    timestamp: datetime = Field(default_factory=datetime.utcnow, description="When recorded")
+    timestamp: datetime = Field(default=datetime.now(UTC), description="When recorded")
 
-    class Config:
-        frozen = False
+    model_config = ConfigDict(frozen=False)

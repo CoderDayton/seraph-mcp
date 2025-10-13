@@ -12,7 +12,7 @@ Following SDD.md:
 
 from enum import Enum
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class Environment(str, Enum):
@@ -21,6 +21,7 @@ class Environment(str, Enum):
     DEVELOPMENT = "development"
     STAGING = "staging"
     PRODUCTION = "production"
+    TEST = "test"
 
 
 class CacheBackend(str, Enum):
@@ -230,6 +231,4 @@ class SeraphConfig(BaseModel):
                 raise ValueError("At least one API key must be configured when auth is enabled in production")
         return v
 
-    class Config:
-        use_enum_values = True
-        validate_assignment = True
+    model_config = ConfigDict(use_enum_values=True, validate_assignment=True)

@@ -31,7 +31,9 @@ __version__ = "1.0.0"
 __author__ = "Seraph MCP Team"
 __license__ = "MIT"
 
+
 # Core exports
+
 from . import (
     budget_management,
     cache,
@@ -41,8 +43,14 @@ from . import (
     observability,
     providers,
     semantic_cache,
-    token_optimization,
 )
+
+# Optional submodule: make import lazy/optional for environments without it
+try:
+    from . import token_optimization as token_optimization  # type: ignore
+except Exception:
+    token_optimization = None  # type: ignore
+
 
 __all__ = [
     "cache",

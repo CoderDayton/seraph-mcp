@@ -1,7 +1,7 @@
 # Testing Documentation for Seraph MCP
 
-**Version:** 1.0  
-**Date:** 2025-01-13  
+**Version:** 1.0
+**Date:** 2025-01-13
 **Status:** Complete for Token Optimization Feature
 
 ---
@@ -161,7 +161,7 @@ class TestTokenOptimizationIntegration:
     async def tools(self):
         """Create tools with mocked dependencies."""
         config = TokenOptimizationConfig(enabled=True)
-        
+
         with patch("seraph_mcp.token_optimization.tools.create_cache"):
             with patch("seraph_mcp.token_optimization.tools.get_observability"):
                 yield TokenOptimizationTools(config=config)
@@ -174,7 +174,7 @@ class TestTokenOptimizationIntegration:
                 content="Test content",
                 model="gpt-4",
             )
-            
+
             assert result["success"] is True
             assert result["tokens_saved"] == 8
 ```
@@ -283,7 +283,7 @@ def test_with_tiktoken(mock_tiktoken):
     mock_encoding = Mock()
     mock_encoding.encode.return_value = [1, 2, 3]
     mock_tiktoken.encoding_for_model.return_value = mock_encoding
-    
+
     # Test code here
 ```
 
@@ -313,14 +313,14 @@ async def test_with_async_cache(mock_cache):
 with patch("seraph_mcp.token_optimization.tools.create_cache") as mock_factory:
     mock_cache = AsyncMock()
     mock_factory.return_value = mock_cache
-    
+
     # Test code using cache
 
 # Mock observability
 with patch("seraph_mcp.token_optimization.tools.get_observability") as mock_obs:
     mock_observer = Mock()
     mock_obs.return_value = mock_observer
-    
+
     # Test code using observability
 ```
 
@@ -447,16 +447,16 @@ def test_optimization():
 ```python
 class TestTokenCounter:
     """Group related tests together."""
-    
+
     @pytest.fixture
     def counter(self):
         """Shared fixture for the class."""
         return TokenCounter()
-    
+
     def test_basic_functionality(self, counter):
         """Test basic use case."""
         pass
-    
+
     def test_edge_case(self, counter):
         """Test edge case."""
         pass
@@ -548,7 +548,7 @@ def test_invalid_input_raises_error():
 def test_observability_called():
     with patch("module.observability") as mock_obs:
         my_function()
-        
+
         mock_obs.increment.assert_called_once_with("metric.name")
         mock_obs.histogram.assert_called()
 ```
@@ -560,7 +560,7 @@ def test_observability_called():
 async def test_concurrent_operations():
     tasks = [async_operation(i) for i in range(10)]
     results = await asyncio.gather(*tasks)
-    
+
     assert len(results) == 10
     assert all(r["success"] for r in results)
 ```
@@ -627,23 +627,23 @@ on: [push, pull_request]
 jobs:
   test:
     runs-on: ubuntu-latest
-    
+
     steps:
     - uses: actions/checkout@v3
-    
+
     - name: Set up Python
       uses: actions/setup-python@v4
       with:
-        python-version: '3.10'
-    
+        python-version: '3.12'
+
     - name: Install dependencies
       run: |
         pip install -e ".[dev]"
-    
+
     - name: Run tests with coverage
       run: |
         pytest --cov=src --cov-report=xml --cov-report=term
-    
+
     - name: Upload coverage
       uses: codecov/codecov-action@v3
       with:
@@ -662,11 +662,11 @@ import time
 def test_optimization_performance():
     """Test optimization completes within time limit."""
     content = "Test content " * 100
-    
+
     start = time.perf_counter()
     result = optimize_tokens(content)
     duration_ms = (time.perf_counter() - start) * 1000
-    
+
     assert duration_ms < 100  # Sub-100ms requirement
     assert result["processing_time_ms"] < 100
 ```
@@ -678,11 +678,11 @@ def test_optimization_performance():
 async def test_concurrent_load():
     """Test handling 100 concurrent requests."""
     tasks = [optimize_tokens(f"Content {i}") for i in range(100)]
-    
+
     start = time.perf_counter()
     results = await asyncio.gather(*tasks)
     duration = time.perf_counter() - start
-    
+
     assert len(results) == 100
     assert duration < 5.0  # Complete in 5 seconds
 ```

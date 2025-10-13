@@ -18,11 +18,10 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.10",
-    "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
 ]
-requires-python = ">=3.10"
+requires-python = ">=3.12"
 
 # All dependencies included in main package (monolithic architecture)
 dependencies = [
@@ -72,6 +71,9 @@ all = [
     "chromadb>=0.4.0",               # Semantic cache
 ]
 
+[project.scripts]
+seraph-mcp = "src.server:main"
+
 [project.urls]
 Repository = "https://github.com/coderdayton/seraph-mcp"
 Documentation = "https://seraph-mcp.readthedocs.io"
@@ -82,7 +84,7 @@ where = ["src"]
 
 [tool.ruff]
 line-length = 120
-target-version = "py310"
+target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "N", "B", "UP"]
@@ -94,7 +96,7 @@ indent-style = "space"
 line-ending = "auto"
 
 [tool.mypy]
-python_version = "3.10"
+python_version = "3.12"
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = true
@@ -139,8 +141,20 @@ omit = [
 precision = 2
 show_missing = true
 skip_covered = false
-fail_under = 80
+fail_under = 85
 
 [tool.bandit]
 exclude_dirs = ["tests", "venv", ".venv", "env"]
 skips = ["B101", "B601"]
+
+[tool.basedpyright]
+typeCheckingMode = "strict"
+include = ["src"]
+exclude = ["tests", "venv", ".venv", "env", "__pycache__", "build", "dist"]
+reportInvalidCast = true
+reportUnreachable = true
+reportMissingTypeStubs = false
+reportUnknownVariableType = false
+reportUnknownArgumentType = false
+reportUnknownMemberType = false
+reportConstantRedefinition = false

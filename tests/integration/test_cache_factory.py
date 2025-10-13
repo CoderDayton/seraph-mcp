@@ -1,381 +1,389 @@
 """
 Seraph MCP — Cache Factory Integration Tests
 
-Integration tests for the cache factory, covering:
-- Backend selection via configuration
-- Switching between memory and Redis backends
-- Factory singleton behavior
-- Configuration validation
-- Real Redis integration (when available)
-- Error handling for missing Redis configuration
+Tests for the cache factory that creates and manages cache instances.
+Tests factory pattern, singleton behavior, configuration, and lifecycle management.
+
+Python 3.12+ with modern async patterns and type hints.
 """
 
-import pytest
+from collections.abc import AsyncGenerator
 
-from src.cache import close_all_caches, create_cache, reset_cache_factory
-from src.cache.backends.memory import MemoryCacheBackend
-from src.cache.backends.redis import RedisCacheBackend
+import pytest  # type: ignore[import-untyped]
+
+from src.cache.factory import (
+    clear_cache_registry,
+    close_all_caches,
+    create_cache,
+    get_cache,
+    list_cache_instances,
+    reset_cache_factory,
+)
+from src.cache.interface import CacheInterface
+from src.config import CacheBackend, CacheConfig
+
+# Check if Redis is available
+try:
+    import socket
+
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.settimeout(1)
+    redis_available = sock.connect_ex(("localhost", 6379)) == 0
+    sock.close()
+except Exception:
+    redis_available = False
 
 
-@pytest.fixture(autouse=True)
-async def cleanup_factory():
-    """Clean up cache factory after each test."""
-    yield
-    await close_all_caches()
-    reset_cache_factory()
+class TestCacheFactory:
+    """Test suite for cache factory functionality."""
 
+    @pytest.fixture(autouse=True)  # type: ignore[misc]
+    async def cleanup(self) -> AsyncGenerator[None, None]:  # type: ignore[misc]
+        """Clean up cache instances after each test."""
+        yield
+        await close_all_caches()
+        reset_cache_factory()
 
-@pytest.mark.asyncio
-class TestCacheFactoryMemoryBackend:
-    """Test cache factory with memory backend."""
-
-    async def test_create_memory_backend_by_default(self, mock_env_memory):
-        """Test that memory backend is created by default."""
+    async def test_create_memory_cache_default(self) -> None:
+        """Test creating a memory cache with default configuration."""
         cache = create_cache()
 
-        assert isinstance(cache, MemoryCacheBackend)
-        assert cache.namespace == "test"
+        assert cache is not None
+        assert isinstance(cache, CacheInterface)
 
-        stats = await cache.get_stats()
-        assert stats["backend"] == "memory"
+        # Should be able to use it
+        await cache.set("test_key", "test_value")
+        value = await cache.get("test_key")
+        assert value == "test_value"
 
-    async def test_create_memory_backend_explicit(self, mock_env_memory):
-        """Test explicitly creating memory backend."""
-        cache = create_cache()
+    async def test_create_memory_cache_explicit_config(self) -> None:
+        """Test creating a memory cache with explicit configuration."""
+        config = CacheConfig(
+            backend=CacheBackend.MEMORY,
+            namespace="test_ns",
+            max_size=50,
+            ttl_seconds=1800,
+        )
 
-        # Test basic operations
+        cache = create_cache(config=config, name="custom")
+
+        assert cache is not None
         await cache.set("key1", "value1")
-        result = await cache.get("key1")
-        assert result == "value1"
+        assert await cache.get("key1") == "value1"
 
-    async def test_memory_backend_respects_config(self, monkeypatch):
-        """Test that memory backend respects configuration."""
-        monkeypatch.setenv("CACHE_BACKEND", "memory")
-        monkeypatch.setenv("CACHE_MAX_SIZE", "50")
-        monkeypatch.setenv("CACHE_TTL_SECONDS", "7200")
-        monkeypatch.setenv("CACHE_NAMESPACE", "testapp")
+    @pytest.mark.skipif(not redis_available, reason="Redis server not available")
+    async def test_create_redis_cache_with_config(self, test_redis_url: str) -> None:
+        """Test creating a Redis cache with configuration."""
+        config = CacheConfig(
+            backend=CacheBackend.REDIS,
+            redis_url=test_redis_url,
+            namespace="test_redis",
+            ttl_seconds=3600,
+        )
 
-        cache = create_cache()
+        cache = create_cache(config=config, name="redis_test")
 
-        assert cache.namespace == "testapp"
-        assert cache.default_ttl == 7200
-        assert cache.max_size == 50
+        assert cache is not None
+        await cache.set("key1", "value1")
+        assert await cache.get("key1") == "value1"
 
+    async def test_singleton_behavior(self) -> None:
+        """Test that factory returns the same instance for the same name."""
+        cache1 = create_cache(name="singleton_test")
+        cache2 = create_cache(name="singleton_test")
 
-@pytest.mark.asyncio
-class TestCacheFactoryRedisBackend:
-    """Test cache factory with Redis backend."""
-
-    async def test_create_redis_backend(self, mock_env_redis, redis_client):
-        """Test creating Redis backend via factory."""
-        cache = create_cache()
-
-        assert isinstance(cache, RedisCacheBackend)
-        assert cache.namespace == "test"
-
-        stats = await cache.get_stats()
-        assert stats["backend"] == "redis"
-        assert stats["connected"] is True
-
-    async def test_redis_backend_basic_operations(self, mock_env_redis, redis_client):
-        """Test basic operations with Redis backend."""
-        cache = create_cache()
-
-        # Set and get
-        await cache.set("integration_key", {"data": "integration_value"})
-        result = await cache.get("integration_key")
-        assert result == {"data": "integration_value"}
-
-        # Delete
-        deleted = await cache.delete("integration_key")
-        assert deleted is True
-
-        result = await cache.get("integration_key")
-        assert result is None
-
-    async def test_redis_backend_respects_config(self, monkeypatch, test_redis_url):
-        """Test that Redis backend respects configuration."""
-        monkeypatch.setenv("CACHE_BACKEND", "redis")
-        monkeypatch.setenv("REDIS_URL", test_redis_url)
-        monkeypatch.setenv("REDIS_MAX_CONNECTIONS", "15")
-        monkeypatch.setenv("CACHE_TTL_SECONDS", "1800")
-        monkeypatch.setenv("CACHE_NAMESPACE", "prodapp")
-
-        cache = create_cache()
-
-        assert cache.namespace == "prodapp"
-        assert cache.default_ttl == 1800
-
-    async def test_redis_backend_without_url_raises_error(self, monkeypatch):
-        """Test that Redis backend without URL raises error."""
-        monkeypatch.setenv("CACHE_BACKEND", "redis")
-        monkeypatch.delenv("REDIS_URL", raising=False)
-
-        with pytest.raises((ValueError, RuntimeError)):
-            create_cache()
-
-
-@pytest.mark.asyncio
-class TestCacheFactorySingleton:
-    """Test cache factory singleton behavior."""
-
-    async def test_factory_returns_same_instance(self, mock_env_memory):
-        """Test that factory returns the same cache instance."""
-        cache1 = create_cache()
-        cache2 = create_cache()
-
+        # Should be the exact same instance
         assert cache1 is cache2
 
-    async def test_factory_state_persists(self, mock_env_memory):
-        """Test that cache state persists across factory calls."""
-        cache1 = create_cache()
-        await cache1.set("persistent_key", "persistent_value")
+    async def test_multiple_named_instances(self) -> None:
+        """Test creating multiple named cache instances."""
+        cache1 = create_cache(name="cache1")
+        cache2 = create_cache(name="cache2")
 
-        cache2 = create_cache()
-        result = await cache2.get("persistent_key")
-
-        assert result == "persistent_value"
-
-    async def test_reset_factory_creates_new_instance(self, mock_env_memory):
-        """Test that reset_cache_factory creates a new instance."""
-        cache1 = create_cache()
-        await cache1.set("key", "value")
-
-        # Reset factory
-        await close_all_caches()
-        reset_cache_factory()
-
-        cache2 = create_cache()
-
-        # Should be a new instance
+        # Should be different instances
         assert cache1 is not cache2
 
-        # Old data should be gone
-        result = await cache2.get("key")
-        assert result is None
+        # Should maintain separate data
+        await cache1.set("key", "value1")
+        await cache2.set("key", "value2")
 
+        assert await cache1.get("key") == "value1"
+        assert await cache2.get("key") == "value2"
 
-@pytest.mark.asyncio
-class TestCacheFactoryBackendSwitching:
-    """Test switching between backends."""
+    async def test_get_cache_creates_if_not_exists(self) -> None:
+        """Test that get_cache creates instance if it doesn't exist."""
+        cache = get_cache("new_instance")
 
-    async def test_switch_from_memory_to_redis(self, monkeypatch, test_redis_url, redis_client):
-        """Test switching from memory to Redis backend."""
-        # Start with memory
-        monkeypatch.setenv("CACHE_BACKEND", "memory")
-        monkeypatch.setenv("CACHE_NAMESPACE", "switch_test")
-
-        cache1 = create_cache()
-        assert isinstance(cache1, MemoryCacheBackend)
-
-        await cache1.set("mem_key", "mem_value")
-
-        # Switch to Redis
-        await close_all_caches()
-        reset_cache_factory()
-
-        monkeypatch.setenv("CACHE_BACKEND", "redis")
-        monkeypatch.setenv("REDIS_URL", test_redis_url)
-        monkeypatch.setenv("CACHE_NAMESPACE", "switch_test")
-
-        cache2 = create_cache()
-        assert isinstance(cache2, RedisCacheBackend)
-
-        # Old memory data is not available in Redis
-        result = await cache2.get("mem_key")
-        assert result is None
-
-        # Can set new data in Redis
-        await cache2.set("redis_key", "redis_value")
-        result = await cache2.get("redis_key")
-        assert result == "redis_value"
-
-    async def test_switch_from_redis_to_memory(self, monkeypatch, test_redis_url, redis_client):
-        """Test switching from Redis to memory backend."""
-        # Start with Redis
-        monkeypatch.setenv("CACHE_BACKEND", "redis")
-        monkeypatch.setenv("REDIS_URL", test_redis_url)
-        monkeypatch.setenv("CACHE_NAMESPACE", "switch_test")
-
-        cache1 = create_cache()
-        assert isinstance(cache1, RedisCacheBackend)
-
-        await cache1.set("redis_key", "redis_value")
-
-        # Switch to memory
-        await close_all_caches()
-        reset_cache_factory()
-
-        monkeypatch.setenv("CACHE_BACKEND", "memory")
-        monkeypatch.setenv("CACHE_NAMESPACE", "switch_test")
-
-        cache2 = create_cache()
-        assert isinstance(cache2, MemoryCacheBackend)
-
-        # Old Redis data is not available in memory
-        result = await cache2.get("redis_key")
-        assert result is None
-
-        # Can set new data in memory
-        await cache2.set("mem_key", "mem_value")
-        result = await cache2.get("mem_key")
-        assert result == "mem_value"
-
-
-@pytest.mark.asyncio
-class TestCacheFactoryNamespaceIsolation:
-    """Test namespace isolation across different cache instances."""
-
-    async def test_memory_namespace_isolation(self, monkeypatch):
-        """Test that different namespaces are isolated in memory."""
-        # Create first cache with namespace 'app1'
-        monkeypatch.setenv("CACHE_BACKEND", "memory")
-        monkeypatch.setenv("CACHE_NAMESPACE", "app1")
-
-        cache1 = create_cache()
-        await cache1.set("shared_key", "app1_value")
-
-        # Reset and create second cache with namespace 'app2'
-        await close_all_caches()
-        reset_cache_factory()
-
-        monkeypatch.setenv("CACHE_NAMESPACE", "app2")
-        cache2 = create_cache()
-
-        # Different namespace, so key shouldn't exist
-        result = await cache2.get("shared_key")
-        assert result is None
-
-        # Set in app2
-        await cache2.set("shared_key", "app2_value")
-        result = await cache2.get("shared_key")
-        assert result == "app2_value"
-
-    async def test_redis_namespace_isolation(self, monkeypatch, test_redis_url, redis_client):
-        """Test that different namespaces are isolated in Redis."""
-        # Create first cache with namespace 'service1'
-        monkeypatch.setenv("CACHE_BACKEND", "redis")
-        monkeypatch.setenv("REDIS_URL", test_redis_url)
-        monkeypatch.setenv("CACHE_NAMESPACE", "service1")
-
-        cache1 = create_cache()
-        await cache1.set("shared_key", "service1_value")
-
-        # Reset and create second cache with namespace 'service2'
-        await close_all_caches()
-        reset_cache_factory()
-
-        monkeypatch.setenv("CACHE_NAMESPACE", "service2")
-        cache2 = create_cache()
-
-        # Different namespace, so key shouldn't exist
-        result = await cache2.get("shared_key")
-        assert result is None
-
-        # Set in service2
-        await cache2.set("shared_key", "service2_value")
-        result = await cache2.get("shared_key")
-        assert result == "service2_value"
-
-        # Verify service1 data is still intact
-        await close_all_caches()
-        reset_cache_factory()
-
-        monkeypatch.setenv("CACHE_NAMESPACE", "service1")
-        cache1_new = create_cache()
-        result = await cache1_new.get("shared_key")
-        assert result == "service1_value"
-
-
-@pytest.mark.asyncio
-class TestCacheFactoryCleanup:
-    """Test resource cleanup via factory."""
-
-    async def test_close_all_caches_memory(self, mock_env_memory):
-        """Test closing all memory cache instances."""
-        cache = create_cache()
+        assert cache is not None
         await cache.set("key", "value")
+        assert await cache.get("key") == "value"
 
+    async def test_get_cache_returns_existing(self) -> None:
+        """Test that get_cache returns existing instance."""
+        cache1 = create_cache(name="existing")
+        await cache1.set("key", "value")
+
+        cache2 = get_cache("existing")
+
+        assert cache1 is cache2
+        assert await cache2.get("key") == "value"
+
+    async def test_list_cache_instances(self) -> None:
+        """Test listing all cache instances."""
+        # Initially empty
+        instances = list_cache_instances()
+        assert len(instances) == 0
+
+        # Create some instances
+        create_cache(name="cache1")
+        create_cache(name="cache2")
+        create_cache(name="cache3")
+
+        instances = list_cache_instances()
+        assert len(instances) == 3
+        assert "cache1" in instances
+        assert "cache2" in instances
+        assert "cache3" in instances
+
+    async def test_close_all_caches(self) -> None:
+        """Test closing all cache instances."""
+        # Create multiple caches
+        cache1 = create_cache(name="cache1")
+        cache2 = create_cache(name="cache2")
+
+        await cache1.set("key", "value")
+        await cache2.set("key", "value")
+
+        # Close all
         await close_all_caches()
 
-        # After close, cache should be cleared
+        # Registry should be cleared
+        instances = list_cache_instances()
+        assert len(instances) == 0
+
+    async def test_reset_cache_factory(self) -> None:
+        """Test resetting the cache factory."""
+        # Create some instances
+        create_cache(name="cache1")
+        create_cache(name="cache2")
+
+        assert len(list_cache_instances()) == 2
+
+        # Reset factory
+        reset_cache_factory()
+
+        # Registry should be cleared
+        assert len(list_cache_instances()) == 0
+
+    async def test_clear_cache_registry_alias(self) -> None:
+        """Test that clear_cache_registry is an alias for reset_cache_factory."""
+        create_cache(name="cache1")
+        assert len(list_cache_instances()) == 1
+
+        clear_cache_registry()
+
+        assert len(list_cache_instances()) == 0
+
+    async def test_namespace_isolation(self) -> None:
+        """Test that different namespaces are properly isolated."""
+        config1 = CacheConfig(
+            backend=CacheBackend.MEMORY,
+            namespace="ns1",
+        )
+        config2 = CacheConfig(
+            backend=CacheBackend.MEMORY,
+            namespace="ns2",
+        )
+
+        cache1 = create_cache(config=config1, name="cache_ns1")
+        cache2 = create_cache(config=config2, name="cache_ns2")
+
+        # Same key in different namespaces
+        await cache1.set("shared_key", "value1")
+        await cache2.set("shared_key", "value2")
+
+        # Should maintain separate values
+        assert await cache1.get("shared_key") == "value1"
+        assert await cache2.get("shared_key") == "value2"
+
+    @pytest.mark.skipif(not redis_available, reason="Redis server not available")
+    async def test_different_backends(self, test_redis_url: str) -> None:
+        """Test creating caches with different backends."""
+        mem_config = CacheConfig(
+            backend=CacheBackend.MEMORY,
+            namespace="mem",
+        )
+        redis_config = CacheConfig(
+            backend=CacheBackend.REDIS,
+            redis_url=test_redis_url,
+            namespace="redis",
+        )
+
+        mem_cache = create_cache(config=mem_config, name="memory")
+        redis_cache = create_cache(config=redis_config, name="redis")
+
+        # Both should work independently
+        await mem_cache.set("key", "mem_value")
+        await redis_cache.set("key", "redis_value")
+
+        assert await mem_cache.get("key") == "mem_value"
+        assert await redis_cache.get("key") == "redis_value"
+
+    async def test_concurrent_factory_calls(self) -> None:
+        """Test that factory is thread-safe with concurrent calls."""
+        import asyncio
+
+        async def create_and_use_cache(name: str) -> str:
+            cache = create_cache(name=name)
+            await cache.set("key", name)
+            value = await cache.get("key")
+            return str(value)
+
+        # Create multiple caches concurrently
+        results = await asyncio.gather(
+            create_and_use_cache("cache1"),
+            create_and_use_cache("cache2"),
+            create_and_use_cache("cache3"),
+            create_and_use_cache("cache1"),  # Duplicate
+        )
+
+        assert results[0] == "cache1"
+        assert results[1] == "cache2"
+        assert results[2] == "cache3"
+        assert results[3] == "cache1"
+
+        # Should have 3 unique instances
+        assert len(list_cache_instances()) == 3
+
+    async def test_cache_stats_per_instance(self) -> None:
+        """Test that cache statistics are tracked per instance."""
+        cache1 = create_cache(name="stats1")
+        cache2 = create_cache(name="stats2")
+
+        # Perform operations on cache1
+        await cache1.set("key1", "value1")
+        await cache1.get("key1")
+
+        # Perform operations on cache2
+        await cache2.set("key2", "value2")
+        await cache2.get("key2")
+        await cache2.get("nonexistent")
+
+        # Check stats are separate
+        stats1 = await cache1.get_stats()
+        stats2 = await cache2.get_stats()
+
+        assert stats1["hits"] == 1
+        assert stats1["misses"] == 0
+        assert stats2["hits"] == 1
+        assert stats2["misses"] == 1
+
+    async def test_default_cache_name(self) -> None:
+        """Test that 'default' is the default cache name."""
+        cache1 = create_cache()
+        cache2 = get_cache()
+
+        # Should return the same instance
+        assert cache1 is cache2
+
+        instances = list_cache_instances()
+        assert "default" in instances
+
+    async def test_cache_persistence_across_gets(self) -> None:
+        """Test that cache data persists across get_cache calls."""
+        # Create and populate cache
+        cache1 = create_cache(name="persistent")
+        await cache1.set("key1", "value1")
+        await cache1.set("key2", "value2")
+
+        # Get the same cache later
+        cache2 = get_cache("persistent")
+
+        # Data should still be there
+        assert await cache2.get("key1") == "value1"
+        assert await cache2.get("key2") == "value2"
+
+    @pytest.mark.skipif(not redis_available, reason="Redis server not available")
+    async def test_mixed_backend_operations(self, test_redis_url: str) -> None:
+        """Test operations with mixed memory and Redis backends."""
+        mem_cache = create_cache(
+            config=CacheConfig(backend=CacheBackend.MEMORY),
+            name="mem",
+        )
+        redis_cache = create_cache(
+            config=CacheConfig(
+                backend=CacheBackend.REDIS,
+                redis_url=test_redis_url,
+            ),
+            name="redis",
+        )
+
+        # Set data in both
+        await mem_cache.set("shared", "from_memory")
+        await redis_cache.set("shared", "from_redis")
+
+        # Each should maintain its own value
+        assert await mem_cache.get("shared") == "from_memory"
+        assert await redis_cache.get("shared") == "from_redis"
+
+        # Clear one shouldn't affect the other
+        await mem_cache.clear()
+        assert await mem_cache.get("shared") is None
+        assert await redis_cache.get("shared") == "from_redis"
+
+    async def test_factory_with_invalid_redis_url(self) -> None:
+        """Test factory behavior with invalid Redis configuration."""
+        config = CacheConfig(
+            backend=CacheBackend.REDIS,
+            redis_url="redis://invalid-host:9999/0",
+            namespace="test",
+        )
+
+        # Should create the backend but may fail on first operation
+        cache = create_cache(config=config, name="invalid_redis")
+        assert cache is not None
+
+        # Actual connection error occurs on first operation
+        # (behavior depends on implementation)
+
+    async def test_ttl_configuration(self) -> None:
+        """Test that TTL configuration is properly applied."""
+        config = CacheConfig(
+            backend=CacheBackend.MEMORY,
+            ttl_seconds=1,
+        )
+
+        cache = create_cache(config=config, name="ttl_test")
+
+        # Set a value (should use default TTL of 1 second)
+        await cache.set("key", "value", ttl=None)
+        assert await cache.get("key") == "value"
+
+        # Wait for expiration
+        import asyncio
+
+        await asyncio.sleep(1.1)
+
+        # Should be expired
+        assert await cache.get("key") is None
+
+    async def test_max_size_configuration(self) -> None:
+        """Test that max_size configuration is properly applied."""
+        config = CacheConfig(
+            backend=CacheBackend.MEMORY,
+            max_size=3,
+        )
+
+        cache = create_cache(config=config, name="maxsize_test")
+
+        # Fill cache to max
+        await cache.set("key1", "value1")
+        await cache.set("key2", "value2")
+        await cache.set("key3", "value3")
+
+        # Add one more (should trigger eviction)
+        await cache.set("key4", "value4")
+
+        # Check that LRU eviction occurred
         stats = await cache.get_stats()
-        assert stats["size"] == 0
-
-    async def test_close_all_caches_redis(self, mock_env_redis, redis_client):
-        """Test closing all Redis cache instances."""
-        cache = create_cache()
-        await cache.set("key", "value")
-
-        # Should not raise
-        await close_all_caches()
-
-    async def test_close_all_caches_idempotent(self, mock_env_memory):
-        """Test that close_all_caches can be called multiple times."""
-        create_cache()
-
-        await close_all_caches()
-        await close_all_caches()  # Should not raise
-
-
-@pytest.mark.asyncio
-class TestCacheFactoryErrorHandling:
-    """Test error handling in cache factory."""
-
-    async def test_invalid_backend_uses_default(self, monkeypatch):
-        """Test that invalid backend falls back to default."""
-        monkeypatch.setenv("CACHE_BACKEND", "invalid_backend")
-        monkeypatch.setenv("CACHE_NAMESPACE", "test")
-
-        # Should fall back to memory backend
-        cache = create_cache()
-        assert isinstance(cache, MemoryCacheBackend)
-
-    async def test_redis_connection_failure_handling(self, monkeypatch):
-        """Test handling of Redis connection failures."""
-        monkeypatch.setenv("CACHE_BACKEND", "redis")
-        monkeypatch.setenv("REDIS_URL", "redis://nonexistent:9999/0")
-        monkeypatch.setenv("REDIS_SOCKET_TIMEOUT", "1")
-        monkeypatch.setenv("CACHE_NAMESPACE", "test")
-
-        # Factory should create backend, but operations will fail
-        cache = create_cache()
-        assert isinstance(cache, RedisCacheBackend)
-
-        # Operations should handle connection errors gracefully
-        # (depending on implementation, may raise or return None)
-
-
-@pytest.mark.asyncio
-class TestCacheFactoryConfiguration:
-    """Test configuration handling in cache factory."""
-
-    async def test_config_from_environment(self, monkeypatch):
-        """Test that factory reads configuration from environment."""
-        monkeypatch.setenv("CACHE_BACKEND", "memory")
-        monkeypatch.setenv("CACHE_TTL_SECONDS", "5400")
-        monkeypatch.setenv("CACHE_MAX_SIZE", "250")
-        monkeypatch.setenv("CACHE_NAMESPACE", "envtest")
-
-        cache = create_cache()
-
-        assert cache.namespace == "envtest"
-        assert cache.default_ttl == 5400
-        assert cache.max_size == 250
-
-    async def test_default_values_when_not_configured(self, monkeypatch):
-        """Test default values when environment not set."""
-        # Clear relevant env vars
-        for key in [
-            "CACHE_BACKEND",
-            "CACHE_TTL_SECONDS",
-            "CACHE_MAX_SIZE",
-            "CACHE_NAMESPACE",
-        ]:
-            monkeypatch.delenv(key, raising=False)
-
-        cache = create_cache()
-
-        # Should use defaults
-        assert isinstance(cache, MemoryCacheBackend)
-        assert cache.namespace == "seraph"
+        assert stats["evictions"] >= 1

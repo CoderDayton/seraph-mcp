@@ -4,7 +4,7 @@ Version: 3.0
 Author: Senior Software Engineer / Systems Architect
 Status: Canonical system design for Seraph MCP with monolithic architecture
 Date: 2025-10-12
-Last Updated: 2025-01-13 (Refactored to monolithic architecture with feature flags)
+Last Updated: 2025-01-14 (Configuration audit, Pydantic v2 migration, test suite modernization)
 
 ---
 
@@ -587,7 +587,7 @@ class ModelRoutingConfig(BaseModel):
 
 ---
 
-### Feature 3: Semantic Cache (Future Implementation)
+### Feature 3: Semantic Cache ✅ IMPLEMENTED
 
 **Purpose:** Vector-based semantic similarity caching
 
@@ -637,22 +637,22 @@ remote-embeddings = [
 ```python
 class SemanticCacheConfig(BaseModel):
     enabled: bool = True
-    
+
     # Embedding provider (uses existing provider system)
     embedding_provider: str = "local"  # or "openai", "openai-compatible"
     embedding_model: str = "all-MiniLM-L6-v2"
     embedding_api_key: Optional[str] = None
     embedding_base_url: Optional[str] = None  # For Ollama/LM Studio
-    
+
     # Similarity search
     similarity_threshold: float = 0.80
     max_results: int = 10
-    
+
     # ChromaDB settings
     collection_name: str = "seraph_semantic_cache"
     persist_directory: str = "./data/chromadb"
     max_cache_entries: int = 10000
-    
+
     # Performance
     batch_size: int = 32
     cache_embeddings: bool = True
@@ -696,7 +696,7 @@ The context optimization system provides two complementary compression approache
 #### Method 2: Seraph Compression (Deterministic & Cacheable)
 - **Best For**: Long prompts (>3k tokens), repeated queries, multi-session memory
 - **How It Works** (Three-Tier Pipeline):
-  
+
   **Tier-1 (500x-style)**: Structural compression
   - **L1 Layer**: Ultra-small skeleton (0.2% ratio)
     - Bullets from anchor extraction (entities, quantities, dates, URLs)
@@ -707,24 +707,24 @@ The context optimization system provides two complementary compression approache
   - **L3 Layer**: Factual extracts (5% ratio)
     - Top salient chunks preserving structure
     - Extractive, no generative changes
-  
+
   **Tier-2 (DCP)**: Dynamic context pruning
   - Importance + novelty + locality scoring
   - Greedy selection under token budget
   - Compresses L3 further (to ~8% of original)
-  
+
   **Tier-3 (Hierarchical)**: Query-time compression
   - Optional LLMLingua-2 for runtime polish
   - Falls back to internal rules if unavailable
   - Enables query-specific layer selection
 
 - **Performance**: Sub-100ms for queries, deterministic caching
-- **Strengths**: 
+- **Strengths**:
   - Same input → same output (integrity-hashed)
   - Amortized cost (build once, query many times)
   - BM25/heuristics on CPU (no API calls per query)
   - Failure isolation (structural pruning reduces over-aggressive abstraction)
-- **Tradeoffs**: 
+- **Tradeoffs**:
   - Cold start cost (seconds for large corpora)
   - Less nuanced than AI for small inputs
   - Requires tuning for niche domains
@@ -815,13 +815,13 @@ class ContextOptimizationConfig(BaseModel):
 
 ---
 
-### Feature 5: Budget Management (Future Implementation)
+### Feature 5: Budget Management ✅ IMPLEMENTED
 
 **Purpose:** Cost tracking and enforcement with free tier detection
 
 **Location:** `src/budget_management/`
 
-**Status:** Planned for future release
+**Status:** ✅ Implemented and exposed as MCP tools
 
 **Purpose:** Comprehensive cost tracking, forecasting, and enforcement with free tier detection and intelligent alerts.
 
@@ -1146,34 +1146,106 @@ Enforcement:
 
 ## File Layout (Monolithic Architecture)
 
-- `src/`
-  - `src/server.py` — FastMCP stdio server (ONLY entrypoint)
-  - `src/config/`
-    - `src/config/schemas.py` — Pydantic models
-    - `src/config/loader.py` — Config loading
-    - `src/config/__init__.py` — Exports
-  - `src/cache/`
-    - `src/cache/factory.py` — ONLY cache factory
-    - `src/cache/interface.py` — Cache interface
-    - `src/cache/backends/memory.py` — Memory backend
-    - `src/cache/backends/redis.py` — Redis backend (core optional)
-    - `src/cache/__init__.py` — Exports
-  - `src/observability/`
-    - `src/observability/monitoring.py` — Observability adapter
-    - `src/observability/__init__.py` — Exports
-  - `src/errors.py` — Error types
-  - `src/__init__.py` — Core exports
-- `plugins/` — Optional features as separate packages
-- `tests/`
-  - `tests/unit/`
-  - `tests/integration/`
-- `examples/`
-- `docs/`
-  - `docs/SDD.md` (this file)
-  - `docs/PLUGIN_GUIDE.md` (plugin development guide)
-- `fastmcp.json` — FastMCP configuration
-- `pyproject.toml` — Python package configuration
-- `.env.example` — Example environment configuration
+```
+seraph-mcp/
+├── src/                          # Source code
+│   ├── server.py                 # FastMCP stdio server (ONLY entrypoint)
+│   ├── config/                   # Configuration management
+│   │   ├── schemas.py            # Pydantic v2 models with ConfigDict
+│   │   ├── loader.py             # Config loading
+│   │   └── __init__.py           # Exports
+│   ├── cache/                    # Caching system
+│   │   ├── factory.py            # Cache factory (memory/Redis)
+│   │   ├── interface.py          # Cache interface
+│   │   └── backends/
+│   │       ├── memory.py         # Memory backend
+│   │       └── redis.py          # Redis backend (uses aclose())
+│   ├── context_optimization/     # Compression system
+│   │   ├── optimizer.py          # Hybrid optimizer
+│   │   ├── seraph_compression.py # 3-tier deterministic compression
+│   │   ├── config.py             # Optimization config
+│   │   └── models.py             # Result models
+│   ├── providers/                # AI provider integrations
+│   │   ├── base.py               # Provider interface
+│   │   ├── openai.py             # OpenAI provider
+│   │   ├── anthropic.py          # Anthropic provider
+│   │   └── google_ai.py          # Google Gemini provider
+│   ├── budget_management/        # Cost tracking
+│   │   ├── tracker.py            # Budget tracker
+│   │   └── config.py             # Budget config
+│   ├── observability/            # Monitoring and logging
+│   │   └── monitoring.py         # Observability adapter
+│   └── errors.py                 # Error types
+│
+├── tests/                        # Test suite (71 passing, 29 skipped)
+│   ├── conftest.py               # Shared fixtures
+│   ├── unit/                     # Unit tests
+│   │   ├── cache/                # Cache backend tests
+│   │   ├── config/               # Config tests
+│   │   └── context_optimization/ # Compression tests (32 tests)
+│   └── integration/              # Integration tests
+│       └── test_cache_factory.py
+│
+├── docker/                       # Docker infrastructure
+│   ├── Dockerfile                # Application container
+│   ├── docker-compose.yml        # Production Redis
+│   ├── docker-compose.dev.yml    # Development Redis
+│   ├── .dockerignore             # Build exclusions
+│   └── README.md                 # Docker documentation
+│
+├── docs/                         # Documentation
+│   ├── SDD.md                    # System Design Document (this file)
+│   ├── TESTING.md                # Testing guide
+│   ├── PROVIDERS.md              # Provider integration guide
+│   ├── CONFIG_AUDIT_2025.md      # Configuration audit report
+│   ├── redis/
+│   │   └── REDIS_SETUP.md        # Redis configuration
+│   └── publishing/
+│       └── PUBLISH_TO_PYPI.md    # Publishing guide
+│
+├── examples/                     # Usage examples
+├── scripts/                      # Utility scripts
+│   └── setup-pre-commit.sh       # Pre-commit hook setup
+│
+├── .github/workflows/            # CI/CD pipelines
+│   ├── ci.yml                    # Main CI pipeline
+│   └── pre-commit.yml            # Pre-commit checks
+│
+├── fastmcp.json                  # FastMCP dev configuration
+├── prod.fastmcp.json             # FastMCP prod configuration
+├── pyproject.toml                # Python package configuration
+├── .python-version               # Python 3.12
+├── .pre-commit-config.yaml       # Pre-commit hooks
+├── .gitignore                    # Git exclusions
+├── README.md                     # Main documentation
+├── CONTRIBUTING.md               # Contribution guide
+├── LICENSE                       # MIT License
+└── .env.example                  # Environment template
+```
+
+### Recent Structural Improvements (January 2025)
+
+**Configuration Modernization:**
+- ✅ Migrated all Pydantic models from v1 `class Config:` to v2 `ConfigDict`
+- ✅ Aligned all dependency versions across `pyproject.toml`, `fastmcp.json`, `prod.fastmcp.json`
+- ✅ Fixed ruff target-version: `py310` → `py312`
+- ✅ Added all missing provider dependencies to FastMCP configs
+
+**Code Quality:**
+- ✅ Zero Pydantic deprecation warnings
+- ✅ Zero pytest fixture warnings
+- ✅ Updated Redis backend to use `aclose()` instead of deprecated `close()`
+- ✅ Clean test build: 71 passed, 29 skipped, 0 warnings
+
+**Documentation Cleanup:**
+- ✅ Removed outdated completion/fix documents from June 2024
+- ✅ Organized all Docker files into `docker/` directory
+- ✅ Created comprehensive configuration audit report
+
+**Test Suite:**
+- ✅ 32 SeraphCompressor tests rewritten to match new API (`build()`, `query()`, `pack()`)
+- ✅ All tests use modern Pydantic v2 patterns
+- ✅ Comprehensive coverage of 3-tier compression system
 
 ---
 
@@ -1195,9 +1267,11 @@ Enforcement:
 
 ### Core Implementation (Complete ✅)
 1. ✅ MCP stdio server and tools
-2. ✅ Typed Pydantic config and loader
-3. ✅ Cache factory + memory backend
+2. ✅ Typed Pydantic v2 config with ConfigDict (migrated January 2025)
+3. ✅ Cache factory + memory backend + Redis backend (with aclose())
 4. ✅ Observability adapter with structured logs
+5. ✅ Configuration alignment across all config files
+6. ✅ Clean test suite with zero deprecation warnings
 5. ✅ Standardized error types
 6. ✅ Redis backend implemented as core optional; toggle via `CACHE_BACKEND`
 7. ✅ Minimal tests for Redis backend (unit + integration)
@@ -1235,6 +1309,8 @@ Enforcement:
 - [x] Automatic cache hits based on semantic similarity
 - [x] Minimal, functional implementation
 - [x] Configuration schema
+- [x] MCP tools integration (5 tools: lookup, store, search, stats, clear)
+- [x] Auto-enabling via environment detection
 
 **Budget Management System (✅ Complete):**
 - [x] SQLite-based cost tracking (zero external dependencies)
@@ -1246,6 +1322,8 @@ Enforcement:
 - [x] Spending analytics by provider, model, time period
 - [x] Optional webhook notifications
 - [x] Minimal implementation (~1000 lines total)
+- [x] MCP tools integration (3 tools: check_budget, usage_report, forecast_spending)
+- [x] Auto-enabling and graceful degradation
 
 **Future Features (📋 Planned):**
 1. ✅ Context Optimization System (COMPLETED)
@@ -1257,13 +1335,13 @@ Enforcement:
    - ✅ Budget integration
    - ✅ Sub-100ms performance
    - ✅ Configurable compression strategies
-5. ⬜ Budget Management Plugin
-   - Cost tracking database
-   - Usage analytics and reporting
-   - Spending forecasts with confidence intervals
-   - Free tier detection
-   - Alert system
-6. ⬜ Quality Preservation Plugin
+   - ✅ MCP tools integration (3 tools: optimize_context, settings, stats)
+2. ⬜ Model Routing System
+   - Intelligent provider selection
+   - Cost-performance optimization
+   - Real-time pricing integration
+   - Quality-based routing decisions
+3. ⬜ Quality Preservation Plugin
    - Multi-dimensional validation
    - Semantic similarity calculation
    - Automatic rollback mechanism

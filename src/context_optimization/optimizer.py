@@ -12,6 +12,7 @@ Target: <100ms processing, >=90% quality, 20-40% token reduction
 import asyncio
 import hashlib
 import time
+from typing import Any
 
 import tiktoken
 
@@ -65,7 +66,9 @@ Respond with ONLY a single number between 0.0 and 1.0. Nothing else."""
 class ContextOptimizer:
     """AI-powered context optimizer with automatic learning"""
 
-    def __init__(self, config: ContextOptimizationConfig, provider=None, budget_tracker=None):
+    def __init__(
+        self, config: ContextOptimizationConfig, provider: Any | None = None, budget_tracker: Any | None = None
+    ):
         """
         Initialize optimizer.
 
@@ -75,8 +78,8 @@ class ContextOptimizer:
             budget_tracker: Optional BudgetTracker for cost savings tracking
         """
         self.config = config
-        self.provider = provider
-        self.budget_tracker = budget_tracker
+        self.provider: Any | None = provider
+        self.budget_tracker: Any | None = budget_tracker
 
         # Token counter
         try:
@@ -85,14 +88,14 @@ class ContextOptimizer:
             self.encoding = None
 
         # Simple in-memory cache for optimization results
-        self.cache = {}
+        self.cache: dict[str, OptimizationResult] = {}
 
         # Seraph compressor for deterministic multi-layer compression
         self.seraph_compressor = SeraphCompressor(seed=7)
-        self.seraph_cache = {}  # Cache for seraph compression results
+        self.seraph_cache: dict[str, dict[str, Any]] = {}  # Cache for seraph compression results
 
         # Learning statistics
-        self.stats = {
+        self.stats: dict[str, int | float | dict[str, int]] = {
             "total_optimizations": 0,
             "successful_optimizations": 0,
             "total_tokens_saved": 0,
@@ -226,7 +229,7 @@ class ContextOptimizer:
 
             return result
 
-        except asyncio.TimeoutError:
+        except TimeoutError:
             # Timeout - return original content
             optimization_time_ms = (time.perf_counter() - start_time) * 1000
             return OptimizationResult(
@@ -440,17 +443,17 @@ class ContextOptimizer:
         try:
             # Use provider's generate method (adjust based on actual provider interface)
             if hasattr(self.provider, "generate"):
-                response = await self.provider.generate(
+                response: Any = await self.provider.generate(
                     prompt=prompt,
                     max_tokens=max_tokens,
                     temperature=0.3,  # Low temperature for consistent compression
                 )
-                return response.get("content", "") or response.get("text", "")
+                return str(response.get("content", "") or response.get("text", ""))
             else:
                 # Fallback to chat-style interface
                 messages = [{"role": "user", "content": prompt}]
-                response = await self.provider.chat(messages=messages, max_tokens=max_tokens)
-                return response.get("content", "") or response.get("message", {}).get("content", "")
+                chat_response: Any = await self.provider.chat(messages=messages, max_tokens=max_tokens)
+                return str(chat_response.get("content", "") or chat_response.get("message", {}).get("content", ""))
 
         except Exception as e:
             print(f"Provider call error: {e}")
@@ -491,24 +494,35 @@ class ContextOptimizer:
 
     def _update_stats(self, result: OptimizationResult):
         """Update running statistics"""
-        self.stats["total_optimizations"] += 1
+        total_opts = self.stats["total_optimizations"]
+        assert isinstance(total_opts, int)
+        self.stats["total_optimizations"] = total_opts + 1
 
         # Track method usage
         method = getattr(result, "method", "ai")
-        if method in self.stats["method_usage"]:
-            self.stats["method_usage"][method] += 1
+        method_usage = self.stats["method_usage"]
+        if isinstance(method_usage, dict) and method in method_usage:
+            method_usage[method] += 1
 
         if result.validation_passed and not result.rollback_occurred:
-            self.stats["successful_optimizations"] += 1
-            self.stats["total_tokens_saved"] += result.tokens_saved
+            successful_opts = self.stats["successful_optimizations"]
+            assert isinstance(successful_opts, int)
+            self.stats["successful_optimizations"] = successful_opts + 1
+
+            total_saved = self.stats["total_tokens_saved"]
+            assert isinstance(total_saved, int)
+            self.stats["total_tokens_saved"] = total_saved + result.tokens_saved
 
             # Running average for quality
             n = self.stats["successful_optimizations"]
+            assert isinstance(n, int)
             current_avg_quality = self.stats["avg_quality_score"]
+            assert isinstance(current_avg_quality, float)
             self.stats["avg_quality_score"] = (current_avg_quality * (n - 1) + result.quality_score) / n
 
             # Running average for reduction
             current_avg_reduction = self.stats["avg_reduction_percentage"]
+            assert isinstance(current_avg_reduction, float)
             self.stats["avg_reduction_percentage"] = (current_avg_reduction * (n - 1) + result.reduction_percentage) / n
 
     async def _store_feedback(self, result: OptimizationResult):
@@ -535,13 +549,14 @@ class ContextOptimizer:
         except Exception as e:
             print(f"Feedback storage error: {e}")
 
-    def get_stats(self) -> dict:
+    def get_stats(self) -> dict[str, Any]:
         """Get current optimization statistics"""
-        success_rate = (
-            self.stats["successful_optimizations"] / self.stats["total_optimizations"]
-            if self.stats["total_optimizations"] > 0
-            else 0.0
-        )
+        total_opts = self.stats["total_optimizations"]
+        successful_opts = self.stats["successful_optimizations"]
+        assert isinstance(total_opts, int | float)
+        assert isinstance(successful_opts, int | float)
+
+        success_rate = successful_opts / total_opts if total_opts > 0 else 0.0
 
         return {
             **self.stats,
@@ -597,24 +612,18 @@ class ContextOptimizer:
             return
 
         try:
-            # Import here to avoid circular dependency
-            from ..budget_management import record_transaction
-
-            # Record as a negative cost (savings)
-            await record_transaction(
-                tracker=self.budget_tracker,
-                amount=-result.cost_savings_usd,  # Negative = savings
-                transaction_type="optimization_savings",
-                model=result.model_name or "unknown",
-                tokens=result.tokens_saved,
-                metadata={
-                    "reduction_percentage": result.reduction_percentage,
-                    "quality_score": result.quality_score,
-                },
-            )
-        except ImportError:
-            # Budget management not available
-            pass
+            # Record savings directly on budget tracker
+            if hasattr(self.budget_tracker, "record_savings"):
+                await self.budget_tracker.record_savings(
+                    amount=result.cost_savings_usd,
+                    transaction_type="optimization_savings",
+                    model=result.model_name or "unknown",
+                    tokens=result.tokens_saved,
+                    metadata={
+                        "reduction_percentage": result.reduction_percentage,
+                        "quality_score": result.quality_score,
+                    },
+                )
         except Exception as e:
             print(f"Failed to record budget savings: {e}")
 
@@ -622,9 +631,9 @@ class ContextOptimizer:
 # Convenience function
 async def optimize_content(
     content: str,
-    provider=None,
+    provider: Any | None = None,
     config: ContextOptimizationConfig | None = None,
-    budget_tracker=None,
+    budget_tracker: Any | None = None,
 ) -> OptimizationResult:
     """
     Optimize content with AI-powered compression.

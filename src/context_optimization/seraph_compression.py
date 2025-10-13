@@ -35,33 +35,38 @@ from typing import Any
 
 # ---------- Optional dependencies -------------------------------------------------
 try:
-    import tiktoken  # for accurate token counts
+    import tiktoken  # type: ignore[import-untyped] # noqa: F401
 
     _HAS_TIKTOKEN = True
 except Exception:
+    tiktoken = None  # type: ignore[assignment]
     _HAS_TIKTOKEN = False
 
 try:
-    import blake3  # fast hashing
+    import blake3  # type: ignore[import-untyped] # noqa: F401
 
     _HAS_BLAKE3 = True
 except Exception:
+    blake3 = None  # type: ignore[assignment]
     _HAS_BLAKE3 = False
 
 try:
-    from sentence_transformers import SentenceTransformer
-    from sentence_transformers import util as st_util
+    from sentence_transformers import SentenceTransformer  # type: ignore[import-untyped] # noqa: F401
+    from sentence_transformers import util as st_util  # type: ignore[import-untyped] # noqa: F401
 
     _HAS_EMBED = True
 except Exception:
+    SentenceTransformer = None  # type: ignore[assignment, misc]
+    st_util = None  # type: ignore[assignment]
     _HAS_EMBED = False
 
 try:
     # LLMLingua-2 (pip install llmlingua)
-    from llmlingua import LLMLingua
+    from llmlingua import LLMLingua  # type: ignore[import-untyped] # noqa: F401
 
     _HAS_LLMLINGUA = True
 except Exception:
+    LLMLingua = None  # type: ignore[assignment, misc]
     _HAS_LLMLINGUA = False
 
 try:
@@ -80,7 +85,7 @@ def _simple_tokens(text: str) -> list[str]:
 
 
 def count_tokens(text: str, model_name: str = "cl100k_base") -> int:
-    if _HAS_TIKTOKEN:
+    if _HAS_TIKTOKEN and tiktoken is not None:
         try:
             enc = tiktoken.get_encoding(model_name)
         except Exception:
@@ -94,7 +99,7 @@ def count_tokens(text: str, model_name: str = "cl100k_base") -> int:
 
 
 def blake_hash(data: bytes) -> str:
-    if _HAS_BLAKE3:
+    if _HAS_BLAKE3 and blake3 is not None:
         return blake3.blake3(data).hexdigest()
     # Fallback: blake2s
     return hashlib.blake2s(data).hexdigest()
@@ -187,7 +192,7 @@ class Tier1500x:
     Heuristic, deterministic (seeded).
     """
 
-    def __init__(self, seed: int = 7, l1_ratio=0.002, l2_ratio=0.01, l3_ratio=0.05):
+    def __init__(self, seed: int = 7, l1_ratio: float = 0.002, l2_ratio: float = 0.01, l3_ratio: float = 0.05):
         self.seed = seed
         random.seed(seed)
         self.l1_ratio = l1_ratio
@@ -297,7 +302,7 @@ class Tier1500x:
         bm25 = BM25(docs)
         # pseudo-query: all rare terms
         idf = bm25.idf
-        rare_terms = sorted(idf.items(), key=lambda kv: kv[1], reverse=True)[:64]
+        rare_terms = sorted(idf.items(), key=lambda kv: kv[1], reverse=True)[:64]  # type: ignore[arg-type]
         q = [t for t, _ in rare_terms]
         scores = {}
         anchor_by_chunk = defaultdict(list)
@@ -352,7 +357,7 @@ class Tier1500x:
             by_type[a.type].append(a.surface)
         bullets = []
 
-        def uniq(seq):
+        def uniq(seq: list[Any]) -> Any:
             seen = set()
             for x in seq:
                 if x not in seen:
@@ -406,22 +411,25 @@ class Tier2DCP:
         self.budget_ratio = budget_ratio
         self.neighbor_bonus = neighbor_bonus
         self.use_embeddings = use_embeddings and _HAS_EMBED
-        self._embed = SentenceTransformer("all-MiniLM-L6-v2") if self.use_embeddings else None
+        if self.use_embeddings and SentenceTransformer is not None:
+            self._embed = SentenceTransformer("all-MiniLM-L6-v2")
+        else:
+            self._embed = None
 
     def split_sentences(self, text: str) -> list[str]:
         parts = re.split(r"(?<=[.!?])\s+", text.strip())
         return [p.strip() for p in parts if p.strip()]
 
-    def importance_scores(self, sents: list[str]) -> list[float]:
-        docs = [[*_simple_tokens(s)] for s in sents]
+    def importance_scores(self, sentences: list[str]) -> list[float]:
+        docs = [[*_simple_tokens(s)] for s in sentences]
         bm = BM25(docs if docs else [[]])
         # pseudo-query: union of rare tokens
         idf = bm.idf
-        q = [t for t, _ in sorted(idf.items(), key=lambda kv: kv[1], reverse=True)[:64]]
-        return [bm.score(q, i) for i in range(len(sents))]
+        q = [t for t, _ in sorted(idf.items(), key=lambda kv: kv[1], reverse=True)[:64]]  # type: ignore[arg-type]
+        return [bm.score(q, i) for i in range(len(sentences))]
 
-    def novelty(self, chosen_embeds: list[Any], cand_embed: Any, cand_tokens: set) -> float:
-        if chosen_embeds and cand_embed is not None:
+    def novelty(self, chosen_embeds: list[Any], cand_embed: Any, cand_tokens: set[Any]) -> float:
+        if chosen_embeds and cand_embed is not None and st_util is not None:
             # 1 - max cosine similarity
             sims = [float(st_util.cos_sim(cand_embed, e)) for e in chosen_embeds]
             novelty_sim = 1.0 - max(sims)
@@ -441,13 +449,13 @@ class Tier2DCP:
         budget = max_tokens if max_tokens is not None else max(256, int(total * self.budget_ratio))
 
         imp = self.importance_scores(sents)
-        embeds = self._embed.encode(sents, convert_to_tensor=True) if self.use_embeddings else None
+        embeds = self._embed.encode(sents, convert_to_tensor=True) if (self.use_embeddings and self._embed) else None
         chosen: list[int] = []
         chosen_embeds: list[Any] = []
         used = 0
 
         # A simple neighbor map
-        def neighbors(i):
+        def neighbors(i: int) -> list[int]:
             return [j for j in (i - 1, i + 1) if 0 <= j < len(sents)]
 
         available = set(range(len(sents)))
@@ -490,8 +498,8 @@ class Tier3Hierarchical:
     def __init__(self, lingua_model: str = "llmlingua-2-bert-base-uncased", device: str = "cpu"):
         self.has_lingua = _HAS_LLMLINGUA
         self.has_langchain = _HAS_LANGCHAIN
-        self._lingua = None
-        if self.has_lingua:
+        self._lingua: Any = None
+        if self.has_lingua and LLMLingua is not None:
             try:
                 self._lingua = LLMLingua(model=lingua_model, device=device)
             except Exception:
@@ -599,7 +607,7 @@ def _read_text_from_path(p: str) -> str:
         return path.read_text(encoding="utf-8", errors="ignore")
 
 
-def main(argv=None):
+def main(argv: list[str] | None = None) -> None:
     import argparse
 
     parser = argparse.ArgumentParser(description="Seraph 3-Tier Compressor")

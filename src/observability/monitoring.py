@@ -17,7 +17,7 @@ import logging
 import time
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
 
@@ -300,7 +300,7 @@ class JSONFormatter(logging.Formatter):
     def format(self, record: logging.LogRecord) -> str:
         """Format log record as JSON."""
         log_data = {
-            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "timestamp": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
             "level": record.levelname,
             "logger": record.name,
             "message": record.getMessage(),
@@ -320,8 +320,8 @@ class JSONFormatter(logging.Formatter):
             log_data["request_id"] = request_id
 
         # Add any extra fields
-        if hasattr(record, "extra"):
-            log_data.update(record.extra)
+        if hasattr(record, "extra") and isinstance(getattr(record, "extra", None), dict):
+            log_data.update(record.extra)  # type: ignore[attr-defined]
 
         # Add exception info if present
         if record.exc_info:

@@ -147,7 +147,6 @@ Planned utility scripts:
 - [CONTRIBUTING.md](../CONTRIBUTING.md) - Contribution guidelines
 - [.pre-commit-config.yaml](../.pre-commit-config.yaml) - Hook configuration
 - [docs/SDD.md](../docs/SDD.md) - System design decisions
-- [CLAUDE.md](../CLAUDE.md) - Development guidelines
 
 ---
 

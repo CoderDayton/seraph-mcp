@@ -7,7 +7,7 @@ AI-powered optimization with automatic learning.
 
 import os
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class ContextOptimizationConfig(BaseModel):
@@ -62,8 +62,7 @@ class ContextOptimizationConfig(BaseModel):
         description="L3 layer ratio (larger factual extracts)",
     )
 
-    class Config:
-        frozen = False
+    model_config = ConfigDict(frozen=False)
 
 
 def load_config() -> ContextOptimizationConfig:

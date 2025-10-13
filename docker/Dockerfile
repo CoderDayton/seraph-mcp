@@ -1,6 +1,6 @@
 # Production Dockerfile for Seraph MCP
 # SDD-compliant: stdio MCP protocol server
-FROM python:3.11-slim AS builder
+FROM python:3.12-slim AS builder
 
 # Install uv for fast dependency management
 RUN pip install --no-cache-dir uv
@@ -17,7 +17,7 @@ RUN uv sync --frozen --no-dev
 # ============================================================================
 # Runtime stage
 # ============================================================================
-FROM python:3.11-slim
+FROM python:3.12-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \

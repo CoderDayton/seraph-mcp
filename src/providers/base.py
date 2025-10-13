@@ -14,7 +14,7 @@ Per SDD.md:
 
 from abc import ABC, abstractmethod
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from .models_dev import ModelInfo as ModelsDevModelInfo
 from .models_dev import get_models_dev_client
@@ -97,8 +97,7 @@ class CompletionRequest(BaseModel):
     max_tokens: int | None = Field(None, description="Maximum tokens to generate")
     stream: bool = Field(False, description="Whether to stream the response")
 
-    class Config:
-        extra = "allow"  # Allow provider-specific parameters
+    model_config = ConfigDict(extra="allow")  # Allow provider-specific parameters
 
 
 class CompletionResponse(BaseModel):

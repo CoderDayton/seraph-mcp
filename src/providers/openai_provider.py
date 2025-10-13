@@ -22,6 +22,8 @@ try:
 
     OPENAI_AVAILABLE = True
 except ImportError:
+    openai = None  # type: ignore[assignment]
+    AsyncOpenAI = None  # type: ignore[assignment, misc]
     OPENAI_AVAILABLE = False
 
 from .base import (
@@ -39,7 +41,7 @@ class OpenAIProvider(BaseProvider):
         """Initialize OpenAI provider."""
         super().__init__(config)
 
-        if not OPENAI_AVAILABLE:
+        if not OPENAI_AVAILABLE or AsyncOpenAI is None:
             raise RuntimeError("OpenAI SDK not available. Install with: pip install openai>=1.0.0")
 
         # Initialize async client
@@ -92,8 +94,9 @@ class OpenAIProvider(BaseProvider):
                 api_params["max_tokens"] = request.max_tokens
 
             # Add any extra provider-specific parameters
-            if hasattr(request, "extra") and request.extra:
-                api_params.update(request.extra)
+            extra = getattr(request, "extra", None)
+            if extra and isinstance(extra, dict):
+                api_params.update(extra)
 
             # Make API call
             response = await self.client.chat.completions.create(**api_params)
@@ -127,13 +130,14 @@ class OpenAIProvider(BaseProvider):
                 cost_usd=cost,
             )
 
-        except openai.AuthenticationError as e:
-            raise RuntimeError(f"OpenAI authentication failed: {e}") from e
-        except openai.RateLimitError as e:
-            raise RuntimeError(f"OpenAI rate limit exceeded: {e}") from e
-        except openai.APIError as e:
-            raise RuntimeError(f"OpenAI API error: {e}") from e
         except Exception as e:
+            if openai is not None:
+                if isinstance(e, openai.AuthenticationError):
+                    raise RuntimeError(f"OpenAI authentication failed: {e}") from e
+                elif isinstance(e, openai.RateLimitError):
+                    raise RuntimeError(f"OpenAI rate limit exceeded: {e}") from e
+                elif isinstance(e, openai.APIError):
+                    raise RuntimeError(f"OpenAI API error: {e}") from e
             raise RuntimeError(f"Unexpected error calling OpenAI: {e}") from e
 
     async def health_check(self) -> bool:
