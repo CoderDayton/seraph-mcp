@@ -4,7 +4,7 @@ Version: 3.0
 Author: Senior Software Engineer / Systems Architect
 Status: Canonical system design for Seraph MCP with monolithic architecture
 Date: 2025-10-12
-Last Updated: 2025-01-14 (Configuration audit, Pydantic v2 migration, test suite modernization)
+Last Updated: 2025-01-14 (Configuration audit, Pydantic v2 migration, test suite modernization, CI/CD pipeline fixes)
 
 ---
 

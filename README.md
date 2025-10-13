@@ -291,22 +291,6 @@ docker-compose -f docker/docker-compose.yml down
 
 ---
 
-## Publishing
-
-To publish to PyPI:
-
-```bash
-# Build package
-uv build
-
-# Publish (requires PyPI token)
-uv publish
-```
-
-See [docs/publishing/PUBLISH_TO_PYPI.md](docs/publishing/PUBLISH_TO_PYPI.md) for detailed instructions.
-
----
-
 ## Documentation
 
 - **[System Design](docs/SDD.md)** — Architecture and design decisions

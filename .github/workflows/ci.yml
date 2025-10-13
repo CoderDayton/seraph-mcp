@@ -31,7 +31,12 @@ jobs:
 
             - name: Install dependencies
               run: |
-                  uv sync
+                  uv sync --all-extras
+
+            - name: Verify environment
+              run: |
+                  uv run python --version
+                  uv run python -c "import fastmcp; import pydantic; print('✓ Core dependencies available')"
 
             - name: Run ruff linting
               run: |
@@ -60,7 +65,12 @@ jobs:
 
             - name: Install dependencies
               run: |
-                  uv sync
+                  uv sync --all-extras
+
+            - name: Verify environment
+              run: |
+                  uv run python --version
+                  uv run python -c "import mypy; print('✓ Type checking tools available')"
 
             - name: Run mypy type checking
               run: |
@@ -86,7 +96,12 @@ jobs:
 
             - name: Install dependencies
               run: |
-                  uv sync
+                  uv sync --all-extras
+
+            - name: Verify environment
+              run: |
+                  uv run python --version
+                  uv run python -c "import pytest; print('✓ Test dependencies available')"
 
             - name: Skip Redis readiness for memory-only tests
               run: echo "Skipping Redis readiness - memory backend"
@@ -133,11 +148,16 @@ jobs:
 
             - name: Install dependencies
               run: |
-                  uv sync
+                  uv sync --all-extras
+
+            - name: Verify environment
+              run: |
+                  uv run python --version
+                  uv run python -c "import fastmcp; print('✓ Dependencies available for zero-config tests')"
 
             - name: Test zero-config startup
               run: |
-                  python -c "
+                  uv run python -c "
                   import sys
                   sys.path.insert(0, 'src')
                   from server import mcp
@@ -151,7 +171,7 @@ jobs:
 
             - name: Test Seraph compression without AI
               run: |
-                  python -c "
+                  uv run python -c "
                   import sys
                   sys.path.insert(0, 'src')
                   from context_optimization.seraph_compression import SeraphCompressor
@@ -195,11 +215,16 @@ jobs:
 
             - name: Install dependencies
               run: |
-                  uv sync
+                  uv sync --all-extras
+
+            - name: Verify environment
+              run: |
+                  uv run python --version
+                  uv run python -c "import redis; print('✓ Redis client available')"
 
             - name: Wait for Redis
               run: |
-                  max_attempts=30
+                  max_attempts=60
                   attempt=0
                   while [ $attempt -lt $max_attempts ]; do
                     if redis-cli -h localhost -p 6379 ping > /dev/null 2>&1; then
@@ -208,16 +233,16 @@ jobs:
                     fi
                     attempt=$((attempt + 1))
                     echo "Waiting for Redis... ($attempt/$max_attempts)"
-                    sleep 1
+                    sleep 2
                   done
-                  echo "❌ Redis failed to start"
+                  echo "❌ Redis failed to start after $max_attempts attempts"
                   exit 1
 
             - name: Test Redis auto-detection
               env:
                   REDIS_URL: redis://localhost:6379/15
               run: |
-                  python -c "
+                  uv run python -c "
                   import sys
                   import os
                   sys.path.insert(0, 'src')
@@ -239,7 +264,7 @@ jobs:
                   OPENAI_API_KEY: sk-test-key-12345678901234567890
                   OPENAI_MODEL: gpt-3.5-turbo
               run: |
-                  python -c "
+                  uv run python -c "
                   import sys
                   import os
                   sys.path.insert(0, 'src')
@@ -267,11 +292,16 @@ jobs:
 
             - name: Install dependencies
               run: |
-                  uv sync
+                  uv sync --all-extras
+
+            - name: Verify environment
+              run: |
+                  uv run python --version
+                  uv run python -c "from context_optimization.seraph_compression import SeraphCompressor; print('✓ Compression tools available')"
 
             - name: Test Seraph compression layers
               run: |
-                  python -c "
+                  uv run python -c "
                   import sys
                   sys.path.insert(0, 'src')
                   from context_optimization.seraph_compression import SeraphCompressor
@@ -309,7 +339,7 @@ jobs:
 
             - name: Test compression cacheability
               run: |
-                  python -c "
+                  uv run python -c "
                   import sys
                   sys.path.insert(0, 'src')
                   from context_optimization.seraph_compression import SeraphCompressor
@@ -344,7 +374,12 @@ jobs:
 
             - name: Install dependencies
               run: |
-                  uv sync
+                  uv sync --all-extras
+
+            - name: Verify environment
+              run: |
+                  uv run python --version
+                  uv run python -c "import bandit; print('✓ Security scanning tools available')"
 
             - name: Run bandit security scan
               run: |
@@ -390,11 +425,16 @@ jobs:
 
             - name: Install dependencies
               run: |
-                  uv sync
+                  uv sync --all-extras
+
+            - name: Verify environment
+              run: |
+                  uv run python --version
+                  uv run python -c "import redis; from cache import create_cache; print('✓ Smoke test dependencies available')"
 
             - name: Test memory cache operations
               run: |
-                  python -c "
+                  uv run python -c "
                   import sys
                   import asyncio
                   sys.path.insert(0, 'src')
@@ -424,7 +464,7 @@ jobs:
               env:
                   REDIS_URL: redis://localhost:6379/15
               run: |
-                  python -c "
+                  uv run python -c "
                   import sys
                   import asyncio
                   sys.path.insert(0, 'src')
@@ -490,11 +530,16 @@ jobs:
 
             - name: Install dependencies
               run: |
-                  uv sync
+                  uv sync --all-extras
+
+            - name: Verify environment
+              run: |
+                  uv run python --version
+                  uv run python -c "import redis; print('✓ Redis client available')"
 
             - name: Verify Redis via python ping and set/get
               run: |
-                  python -c "
+                  uv run python -c "
                   import redis
                   import sys
 
