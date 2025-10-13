@@ -248,8 +248,8 @@ class TokenOptimizer:
         for pattern, replacement in redundant_phrases:
             content = re.sub(pattern, replacement, content, flags=re.IGNORECASE)
 
-        # Remove repeated words
-        content = re.sub(r"\b(\w+)\s+\1\b", r"\1", content)
+        # Remove repeated words (case-insensitive)
+        content = re.sub(r"\b(\w+)\s+\1\b", r"\1", content, flags=re.IGNORECASE)
 
         return content
 

@@ -465,6 +465,14 @@ More text."""
 class TestSingletonFunction:
     """Tests for singleton helper function."""
 
+    @pytest.fixture(autouse=True)
+    def reset_optimizer_singleton(self):
+        """Reset optimizer singleton before each test."""
+        import src.token_optimization.optimizer as opt_module
+        opt_module._optimizer_instance = None
+        yield
+        opt_module._optimizer_instance = None
+
     def test_get_optimizer_returns_instance(self):
         """Test get_optimizer returns TokenOptimizer instance."""
         with patch("src.token_optimization.optimizer.get_token_counter"):

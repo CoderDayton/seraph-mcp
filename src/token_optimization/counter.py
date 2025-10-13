@@ -73,11 +73,10 @@ class TokenCounter:
         "mistral-tiny": ModelProvider.MISTRAL,
     }
 
-    # Encoding cache for tiktoken
-    _encoding_cache: dict[str, any] = {}
-
     def __init__(self) -> None:
         """Initialize token counter."""
+        # Instance-level encoding cache
+        self._encoding_cache: dict[str, any] = {}
         self._validate_dependencies()
 
     def _validate_dependencies(self) -> None:
@@ -182,10 +181,6 @@ class TokenCounter:
         Returns:
             Token count (estimated or exact)
         """
-        if Anthropic is None:
-            logger.warning("anthropic library not available, using estimation")
-            return self._estimate_tokens(content)
-
         try:
             # Anthropic uses similar tokenization to GPT-4
             # Use tiktoken with cl100k_base as approximation
@@ -197,6 +192,7 @@ class TokenCounter:
                 tokens = encoding.encode(content)
                 return len(tokens)
             else:
+                logger.warning("tiktoken not available, using estimation for Anthropic")
                 return self._estimate_tokens(content)
 
         except Exception as e:

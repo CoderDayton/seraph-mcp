@@ -203,6 +203,7 @@ class TokenOptimizationTools:
                 )
                 self.obs.increment("optimization.quality_failures")
                 return {
+                    "success": False,
                     "error": "Optimization quality below threshold",
                     "quality_score": result.quality_score,
                     "quality_threshold": self.config.quality_threshold,
@@ -247,6 +248,7 @@ class TokenOptimizationTools:
             logger.error(f"Error optimizing tokens: {e}", exc_info=True)
             self.obs.increment("optimization.errors")
             return {
+                "success": False,
                 "error": f"Optimization failed: {str(e)}",
                 "original_content": content,
             }
