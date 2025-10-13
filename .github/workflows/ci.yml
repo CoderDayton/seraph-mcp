@@ -158,10 +158,7 @@ jobs:
             - name: Test zero-config startup
               run: |
                   uv run python -c "
-                  import sys
-                  sys.path.insert(0, 'src')
-                  from server import mcp
-                  from cache import create_cache
+                  from src.cache import create_cache
 
                   # Should work with zero configuration
                   cache = create_cache()
@@ -172,17 +169,15 @@ jobs:
             - name: Test Seraph compression without AI
               run: |
                   uv run python -c "
-                  import sys
-                  sys.path.insert(0, 'src')
-                  from context_optimization.seraph_compression import SeraphCompressor
+                  from src.context_optimization.seraph_compression import SeraphCompressor
 
                   compressor = SeraphCompressor()
                   text = 'This is a test. ' * 100
-                  result = compressor.compress(text, target_ratio=0.05)
+                  result = compressor.build(text)
 
-                  assert result['compressed_text'], 'Compression failed'
-                  assert result['compression_ratio'] < 1.0, 'No compression occurred'
-                  print(f\"✓ Seraph compression: {result['compression_ratio']:.2%} of original\")
+                  assert result.l3, 'Compression failed'
+                  assert len(result.l3) < len(text), 'No compression occurred'
+                  print(f\"✓ Seraph compression: L3 size = {len(result.l3)} chars\")
                   "
 
     test-progressive-features:
@@ -224,29 +219,36 @@ jobs:
 
             - name: Wait for Redis
               run: |
-                  max_attempts=60
-                  attempt=0
-                  while [ $attempt -lt $max_attempts ]; do
-                    if redis-cli -h localhost -p 6379 ping > /dev/null 2>&1; then
-                      echo "✓ Redis is ready"
-                      exit 0
-                    fi
-                    attempt=$((attempt + 1))
-                    echo "Waiting for Redis... ($attempt/$max_attempts)"
-                    sleep 2
-                  done
-                  echo "❌ Redis failed to start after $max_attempts attempts"
-                  exit 1
+                  uv run python -c "
+                  import redis
+                  import time
+                  import sys
+
+                  max_attempts = 60
+                  for attempt in range(max_attempts):
+                      try:
+                          r = redis.Redis(host='localhost', port=6379, socket_connect_timeout=1)
+                          if r.ping():
+                              print('✓ Redis is ready')
+                              sys.exit(0)
+                      except Exception as e:
+                          if attempt == 0:
+                              print(f'Waiting for Redis... (attempt 1/{max_attempts})')
+                          elif attempt % 5 == 0:
+                              print(f'Still waiting... (attempt {attempt + 1}/{max_attempts})')
+                          time.sleep(2)
+
+                  print(f'❌ Redis failed to start after {max_attempts} attempts')
+                  sys.exit(1)
+                  "
 
             - name: Test Redis auto-detection
               env:
                   REDIS_URL: redis://localhost:6379/15
               run: |
                   uv run python -c "
-                  import sys
                   import os
-                  sys.path.insert(0, 'src')
-                  from cache import create_cache
+                  from src.cache import create_cache
 
                   # Should auto-detect and use Redis
                   cache = create_cache()
@@ -265,9 +267,7 @@ jobs:
                   OPENAI_MODEL: gpt-3.5-turbo
               run: |
                   uv run python -c "
-                  import sys
                   import os
-                  sys.path.insert(0, 'src')
 
                   # Test that hybrid compression is detected when provider is available
                   print('✓ Hybrid compression detection test passed')
@@ -302,9 +302,7 @@ jobs:
             - name: Test Seraph compression layers
               run: |
                   uv run python -c "
-                  import sys
-                  sys.path.insert(0, 'src')
-                  from context_optimization.seraph_compression import SeraphCompressor
+                  from src.context_optimization.seraph_compression import SeraphCompressor
 
                   compressor = SeraphCompressor()
                   text = '''
@@ -321,37 +319,34 @@ jobs:
                   Machine learning has many applications in various fields.
                   ''' * 10
 
-                  # Test L1 compression (0.2%)
-                  l1 = compressor.compress(text, target_ratio=0.002)
-                  print(f\"L1 (0.2%): {len(l1['compressed_text'])} chars, ratio: {l1['compression_ratio']:.4f}\")
+                  # Build compression result with all three layers
+                  result = compressor.build(text)
 
-                  # Test L2 compression (1%)
-                  l2 = compressor.compress(text, target_ratio=0.01)
-                  print(f\"L2 (1%): {len(l2['compressed_text'])} chars, ratio: {l2['compression_ratio']:.4f}\")
+                  print(f\"L1: {len(result.l1)} chars\")
+                  print(f\"L2: {len(result.l2)} chars\")
+                  print(f\"L3: {len(result.l3)} chars\")
 
-                  # Test L3 compression (5%)
-                  l3 = compressor.compress(text, target_ratio=0.05)
-                  print(f\"L3 (5%): {len(l3['compressed_text'])} chars, ratio: {l3['compression_ratio']:.4f}\")
-
-                  assert l1['compression_ratio'] < l2['compression_ratio'] < l3['compression_ratio']
+                  # Verify layer sizes are hierarchical (L1 < L2 < L3)
+                  assert len(result.l1) < len(result.l2) < len(result.l3)
+                  assert len(result.l3) < len(text)
                   print('✓ Compression layers verified')
                   "
 
             - name: Test compression cacheability
               run: |
                   uv run python -c "
-                  import sys
-                  sys.path.insert(0, 'src')
-                  from context_optimization.seraph_compression import SeraphCompressor
+                  from src.context_optimization.seraph_compression import SeraphCompressor
 
                   compressor = SeraphCompressor()
                   text = 'Test content for cacheability. ' * 50
 
                   # Compress twice - should get same result (deterministic)
-                  result1 = compressor.compress(text, target_ratio=0.05)
-                  result2 = compressor.compress(text, target_ratio=0.05)
+                  result1 = compressor.build(text)
+                  result2 = compressor.build(text)
 
-                  assert result1['compressed_text'] == result2['compressed_text']
+                  assert result1.l3 == result2.l3
+                  assert result1.l2 == result2.l2
+                  assert result1.l1 == result2.l1
                   print('✓ Compression is deterministic and cacheable')
                   "
 
@@ -435,10 +430,8 @@ jobs:
             - name: Test memory cache operations
               run: |
                   uv run python -c "
-                  import sys
                   import asyncio
-                  sys.path.insert(0, 'src')
-                  from cache import create_cache
+                  from src.cache import create_cache
 
                   async def test_memory_cache():
                       cache = create_cache()
@@ -465,10 +458,8 @@ jobs:
                   REDIS_URL: redis://localhost:6379/15
               run: |
                   uv run python -c "
-                  import sys
                   import asyncio
-                  sys.path.insert(0, 'src')
-                  from cache import create_cache
+                  from src.cache import create_cache
 
                   async def test_redis_cache():
                       cache = create_cache()
