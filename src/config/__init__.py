@@ -4,7 +4,7 @@ Seraph MCP — Configuration Module
 Provides typed configuration loading and validation.
 """
 
-from .loader import get_config, load_config, reload_config
+from .loader import get_config, load_config, reload_config, reset_config
 from .schemas import (
     BudgetConfig,
     CacheBackend,
@@ -26,6 +26,7 @@ __all__ = [
     "load_config",
     "get_config",
     "reload_config",
+    "reset_config",
     # Main config
     "SeraphConfig",
     # Enums

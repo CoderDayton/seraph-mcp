@@ -181,3 +181,16 @@ def reload_config(env_file: str | None = None) -> SeraphConfig:
         Reloaded SeraphConfig instance
     """
     return load_config(env_file=env_file, reload=True)
+
+
+def reset_config() -> None:
+    """
+    Reset the config singleton to None.
+    
+    Used for testing to force config reload on next access.
+    
+    Warning: Only use this in testing contexts.
+    """
+    global _config_instance
+    _config_instance = None
+    logger.debug("Reset config singleton")

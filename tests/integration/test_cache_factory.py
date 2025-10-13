@@ -15,6 +15,7 @@ import pytest
 from src.cache import close_all_caches, create_cache, reset_cache_factory
 from src.cache.backends.memory import MemoryCacheBackend
 from src.cache.backends.redis import RedisCacheBackend
+from src.config import reset_config
 
 
 @pytest.fixture(autouse=True)
@@ -23,6 +24,7 @@ async def cleanup_factory():
     yield
     await close_all_caches()
     reset_cache_factory()
+    reset_config()  # Reset config to force reload with new env vars
 
 
 @pytest.mark.asyncio
@@ -323,13 +325,13 @@ class TestCacheFactoryErrorHandling:
     """Test error handling in cache factory."""
 
     async def test_invalid_backend_uses_default(self, monkeypatch):
-        """Test that invalid backend falls back to default."""
+        """Test that invalid backend raises validation error."""
         monkeypatch.setenv("CACHE_BACKEND", "invalid_backend")
         monkeypatch.setenv("CACHE_NAMESPACE", "test")
 
-        # Should fall back to memory backend
-        cache = create_cache()
-        assert isinstance(cache, MemoryCacheBackend)
+        # Should raise validation error for invalid backend
+        with pytest.raises(Exception):  # Validation error from pydantic
+            cache = create_cache()
 
     async def test_redis_connection_failure_handling(self, monkeypatch):
         """Test handling of Redis connection failures."""

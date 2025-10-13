@@ -39,11 +39,11 @@ class MemoryCacheBackend(CacheInterface):
             namespace: Cache key namespace/prefix
         """
         self.max_size = max_size
-        self.default_ttl = default_ttl
+        self.default_ttl = max(0, int(default_ttl))  # Convert negative to 0
         self.namespace = namespace
 
-        # Cache storage: key -> (value, expiry_time)
-        self._cache: OrderedDict[str, tuple[Any, float | None]] = OrderedDict()
+        # Cache storage: key -> {"value": ..., "expires_at": ...}
+        self._cache: OrderedDict[str, dict[str, Any]] = OrderedDict()
 
         # Stats
         self._hits = 0
@@ -59,8 +59,21 @@ class MemoryCacheBackend(CacheInterface):
         """Create namespaced cache key."""
         return f"{self.namespace}:{key}"
 
-    def _is_expired(self, expiry: float | None) -> bool:
+    def _ttl_seconds(self, ttl: int | None) -> int | None:
+        """
+        Normalize TTL:
+        - None -> default_ttl
+        - 0 or negative -> no expiry (return None)
+        - positive -> provided ttl
+        """
+        if ttl is None:
+            ttl = self.default_ttl
+        ttl = int(ttl)
+        return ttl if ttl > 0 else None
+
+    def _is_expired(self, entry: dict[str, Any]) -> bool:
         """Check if entry is expired."""
+        expiry = entry.get("expires_at")
         if expiry is None:
             return False
         return time.time() > expiry
@@ -74,10 +87,10 @@ class MemoryCacheBackend(CacheInterface):
                 self._misses += 1
                 return None
 
-            value, expiry = self._cache[cache_key]
+            entry = self._cache[cache_key]
 
             # Check expiry
-            if self._is_expired(expiry):
+            if self._is_expired(entry):
                 # Remove expired entry
                 del self._cache[cache_key]
                 self._misses += 1
@@ -87,7 +100,7 @@ class MemoryCacheBackend(CacheInterface):
             self._cache.move_to_end(cache_key)
             self._hits += 1
 
-            return value
+            return entry["value"]
 
     async def set(
         self,
@@ -100,11 +113,10 @@ class MemoryCacheBackend(CacheInterface):
             cache_key = self._make_key(key)
 
             # Calculate expiry time
-            if ttl is None:
-                ttl = self.default_ttl
-
-            if ttl > 0:
-                expiry = time.time() + ttl
+            ttl_seconds = self._ttl_seconds(ttl)
+            
+            if ttl_seconds is not None and ttl_seconds > 0:
+                expiry = time.time() + ttl_seconds
             else:
                 expiry = None  # No expiry
 
@@ -115,7 +127,7 @@ class MemoryCacheBackend(CacheInterface):
                 self._evictions += 1
 
             # Store value
-            self._cache[cache_key] = (value, expiry)
+            self._cache[cache_key] = {"value": value, "expires_at": expiry}
             self._cache.move_to_end(cache_key)
             self._sets += 1
 
@@ -141,9 +153,9 @@ class MemoryCacheBackend(CacheInterface):
             if cache_key not in self._cache:
                 return False
 
-            _, expiry = self._cache[cache_key]
+            entry = self._cache[cache_key]
 
-            if self._is_expired(expiry):
+            if self._is_expired(entry):
                 # Remove expired entry
                 del self._cache[cache_key]
                 return False
@@ -166,6 +178,7 @@ class MemoryCacheBackend(CacheInterface):
                 "backend": "memory",
                 "size": len(self._cache),
                 "max_size": self.max_size,
+                "default_ttl": self.default_ttl,
                 "hits": self._hits,
                 "misses": self._misses,
                 "hit_rate": round(hit_rate, 2),
@@ -189,10 +202,10 @@ class MemoryCacheBackend(CacheInterface):
                 cache_key = self._make_key(key)
 
                 if cache_key in self._cache:
-                    value, expiry = self._cache[cache_key]
+                    entry = self._cache[cache_key]
 
-                    if not self._is_expired(expiry):
-                        result[key] = value
+                    if not self._is_expired(entry):
+                        result[key] = entry["value"]
                         self._cache.move_to_end(cache_key)
                         self._hits += 1
                     else:
@@ -213,10 +226,8 @@ class MemoryCacheBackend(CacheInterface):
             count = 0
 
             # Calculate expiry once
-            if ttl is None:
-                ttl = self.default_ttl
-
-            expiry = time.time() + ttl if ttl > 0 else None
+            ttl_seconds = self._ttl_seconds(ttl)
+            expiry = time.time() + ttl_seconds if ttl_seconds and ttl_seconds > 0 else None
 
             for key, value in items.items():
                 cache_key = self._make_key(key)
@@ -226,7 +237,7 @@ class MemoryCacheBackend(CacheInterface):
                     self._cache.popitem(last=False)
                     self._evictions += 1
 
-                self._cache[cache_key] = (value, expiry)
+                self._cache[cache_key] = {"value": value, "expires_at": expiry}
                 self._cache.move_to_end(cache_key)
                 self._sets += 1
                 count += 1
