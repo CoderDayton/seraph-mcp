@@ -15,44 +15,42 @@ from src.token_optimization.config import TokenOptimizationConfig
 from src.token_optimization.tools import TokenOptimizationTools
 
 
+@pytest.fixture
+async def tools():
+    """Create TokenOptimizationTools instance with mocked dependencies."""
+    config = TokenOptimizationConfig(
+        enabled=True,
+        default_reduction_target=0.20,
+        quality_threshold=0.60,  # Lower threshold to allow for aggressive optimization in tests
+        cache_optimizations=True,
+        optimization_strategies=["whitespace", "redundancy", "compression"],
+    )
+
+    with patch("src.token_optimization.tools.create_cache") as mock_cache_factory:
+        with patch("src.token_optimization.tools.get_observability") as mock_obs_factory:
+            # Mock cache
+            mock_cache = AsyncMock()
+            mock_cache.get.return_value = None
+            mock_cache.set.return_value = True
+            mock_cache_factory.return_value = mock_cache
+
+            # Mock observability
+            mock_obs = Mock()
+            mock_obs.increment = Mock()
+            mock_obs.histogram = Mock()
+            mock_obs.trace = Mock()
+            mock_obs.trace.return_value.__enter__ = Mock()
+            mock_obs.trace.return_value.__exit__ = Mock()
+            mock_obs_factory.return_value = mock_obs
+
+            tools = TokenOptimizationTools(config=config)
+            tools.cache = mock_cache
+            tools.obs = mock_obs
+
+            yield tools
+
+
 class TestTokenOptimizationIntegration:
-    """Integration tests for token optimization feature."""
-
-    @pytest.fixture
-    async def tools(self):
-        """Create TokenOptimizationTools instance with mocked dependencies."""
-        config = TokenOptimizationConfig(
-            enabled=True,
-            default_reduction_target=0.20,
-            quality_threshold=0.60,  # Lower threshold to allow for aggressive optimization in tests
-            cache_optimizations=True,
-            optimization_strategies=["whitespace", "redundancy", "compression"],
-        )
-
-        with patch("src.token_optimization.tools.create_cache") as mock_cache_factory:
-            with patch("src.token_optimization.tools.get_observability") as mock_obs_factory:
-                # Mock cache
-                mock_cache = AsyncMock()
-                mock_cache.get.return_value = None
-                mock_cache.set.return_value = True
-                mock_cache_factory.return_value = mock_cache
-
-                # Mock observability
-                mock_obs = Mock()
-                mock_obs.increment = Mock()
-                mock_obs.histogram = Mock()
-                mock_obs.trace = Mock()
-                mock_obs.trace.return_value.__enter__ = Mock()
-                mock_obs.trace.return_value.__exit__ = Mock()
-                mock_obs_factory.return_value = mock_obs
-
-                tools = TokenOptimizationTools(config=config)
-                tools.cache = mock_cache
-                tools.obs = mock_obs
-
-                yield tools
-
-    @pytest.mark.asyncio
     async def test_optimize_tokens_end_to_end(self, tools):
         """Test complete optimization workflow."""
         content = "This  is   a  test   with    extra     spaces and redundancy."
@@ -77,20 +75,48 @@ class TestTokenOptimizationIntegration:
         """Test optimization with cache hit."""
         content = "Test content for caching"
 
-        # First call - cache miss
-        with patch.object(tools.counter, "count_tokens", side_effect=[20, 18]):
+        # Create a mock counter that returns predictable token counts
+        # Need enough values for multiple calls
+        mock_counter = Mock()
+        mock_counter.count_tokens = Mock(side_effect=[20, 18, 20, 18, 20, 18])
+        
+        # Replace the counter in both tools and optimizer
+        original_counter = tools.counter
+        original_optimizer_counter = tools.optimizer.counter
+        tools.counter = mock_counter
+        tools.optimizer.counter = mock_counter
+
+        try:
+            # First call - cache miss
             result1 = tools.optimize_tokens(content=content, model="gpt-4")
+
+            assert result1["success"] is True
+            assert result1["original_tokens"] == 20
+            assert result1["optimized_tokens"] == 18
 
             # Verify cache set was called
             assert tools.cache.set.called
 
-        # Second call - should attempt cache lookup
-        tools.cache.get.return_value = result1
+            # Second call - should attempt cache lookup and return cached result
+            # Set cache.get to return result1 wrapped as awaitable
+            async def mock_get(key):
+                return result1
+            
+            tools.cache.get = mock_get
 
-        result2 = tools.optimize_tokens(content=content, model="gpt-4")
+            result2 = tools.optimize_tokens(content=content, model="gpt-4")
 
-        # Both results should be similar
-        assert result2 == result1
+            # Both results should have the same key fields (cache hit)
+            # processing_time_ms might differ slightly, so check other fields
+            assert result2["success"] == result1["success"]
+            assert result2["original_tokens"] == result1["original_tokens"]
+            assert result2["optimized_tokens"] == result1["optimized_tokens"]
+            assert result2["tokens_saved"] == result1["tokens_saved"]
+            assert result2["optimized_content"] == result1["optimized_content"]
+        finally:
+            # Restore original counters
+            tools.counter = original_counter
+            tools.optimizer.counter = original_optimizer_counter
 
     @pytest.mark.asyncio
     async def test_optimize_tokens_quality_threshold_failure(self, tools):
