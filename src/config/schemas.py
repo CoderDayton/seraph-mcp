@@ -276,6 +276,10 @@ class ProviderConfig(BaseModel):
         default=None,
         description="API key for the provider"
     )
+    model: Optional[str] = Field(
+        default=None,
+        description="Model name to use (e.g., 'gpt-4', 'claude-3-opus', 'llama-3-8b'). Required for operation."
+    )
     base_url: Optional[str] = Field(
         default=None,
         description="Custom base URL (optional, for openai-compatible)"
@@ -332,6 +336,13 @@ class SeraphConfig(BaseModel):
     budget: BudgetConfig = Field(default_factory=BudgetConfig)
     security: SecurityConfig = Field(default_factory=SecurityConfig)
     providers: ProvidersConfig = Field(default_factory=ProvidersConfig)
+
+    # Context Optimization (lazy-loaded to avoid import issues)
+    @property
+    def context_optimization(self):
+        """Load context optimization config on demand."""
+        from ..context_optimization.config import load_config as load_context_config
+        return load_context_config()
 
     @field_validator("security")
     @classmethod

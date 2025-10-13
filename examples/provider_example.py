@@ -195,12 +195,26 @@ async def example_health_check():
 
 
 async def example_openai_compatible():
-    """Example: Using OpenAI-compatible provider (LM Studio, Ollama, etc.)."""
+    """Example: Using OpenAI-compatible provider (Together AI, Fireworks, Anyscale, local LLMs, etc.)."""
     logger.info("\n" + "=" * 60)
-    logger.info("Example 6: OpenAI-Compatible Provider (Local Models)")
+    logger.info("Example 6: OpenAI-Compatible Provider (Any OpenAI-compatible service)")
     logger.info("=" * 60)
 
-    # Configure for local LM Studio instance
+    # Example 1: Together AI (cloud service)
+    # config = ProviderConfig(
+    #     api_key="your-together-api-key",
+    #     base_url="https://api.together.xyz/v1",
+    #     timeout=30.0,
+    # )
+
+    # Example 2: Fireworks AI (cloud service)
+    # config = ProviderConfig(
+    #     api_key="your-fireworks-api-key",
+    #     base_url="https://api.fireworks.ai/inference/v1",
+    #     timeout=30.0,
+    # )
+
+    # Example 3: Local LM Studio (local model)
     config = ProviderConfig(
         api_key="not-needed",  # Local services often don't need API keys
         base_url="http://localhost:1234/v1",  # LM Studio default
@@ -211,9 +225,9 @@ async def example_openai_compatible():
         provider = create_provider("openai-compatible", config)
         logger.info(f"Created provider: {provider}")
 
-        # List available local models
+        # List available models
         models = await provider.list_models()
-        logger.info(f"\nLocal models available: {len(models)}")
+        logger.info(f"\nModels available: {len(models)}")
         for model in models:
             logger.info(f"  - {model.model_id}")
 

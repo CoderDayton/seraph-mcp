@@ -9,7 +9,7 @@ import pytest
 from unittest.mock import Mock, patch, MagicMock
 import time
 
-from seraph_mcp.token_optimization.optimizer import (
+from src.token_optimization.optimizer import (
     TokenOptimizer,
     OptimizationStrategy,
     OptimizationResult,
@@ -92,7 +92,7 @@ class TestTokenOptimizer:
     @pytest.fixture
     def optimizer(self):
         """Create a TokenOptimizer instance with default settings."""
-        with patch("seraph_mcp.token_optimization.optimizer.get_token_counter") as mock_counter:
+        with patch("src.token_optimization.optimizer.get_token_counter") as mock_counter:
             mock_counter_instance = Mock()
             mock_counter_instance.count_tokens.return_value = 10
             mock_counter.return_value = mock_counter_instance
@@ -107,7 +107,7 @@ class TestTokenOptimizer:
 
     def test_initialization_defaults(self):
         """Test TokenOptimizer initializes with default settings."""
-        with patch("seraph_mcp.token_optimization.optimizer.get_token_counter"):
+        with patch("src.token_optimization.optimizer.get_token_counter"):
             optimizer = TokenOptimizer()
 
             assert optimizer.quality_threshold == 0.90
@@ -116,7 +116,7 @@ class TestTokenOptimizer:
 
     def test_initialization_custom_settings(self):
         """Test TokenOptimizer initializes with custom settings."""
-        with patch("seraph_mcp.token_optimization.optimizer.get_token_counter"):
+        with patch("src.token_optimization.optimizer.get_token_counter"):
             optimizer = TokenOptimizer(
                 quality_threshold=0.85,
                 preserve_code_blocks=False,
@@ -286,7 +286,7 @@ End."""
         # Should have lower quality due to significant reduction
         assert result < 1.0
 
-    @patch("seraph_mcp.token_optimization.optimizer.get_token_counter")
+    @patch("src.token_optimization.optimizer.get_token_counter")
     def test_optimize_basic(self, mock_get_counter):
         """Test basic optimization with default strategies."""
         mock_counter = Mock()
@@ -305,7 +305,7 @@ End."""
         assert result.reduction_ratio > 0
         assert len(result.strategies_applied) > 0
 
-    @patch("seraph_mcp.token_optimization.optimizer.get_token_counter")
+    @patch("src.token_optimization.optimizer.get_token_counter")
     def test_optimize_with_specific_strategies(self, mock_get_counter):
         """Test optimization with specific strategies."""
         mock_counter = Mock()
@@ -323,7 +323,7 @@ End."""
 
         assert result.strategies_applied == strategies
 
-    @patch("seraph_mcp.token_optimization.optimizer.get_token_counter")
+    @patch("src.token_optimization.optimizer.get_token_counter")
     def test_optimize_aggressive_mode(self, mock_get_counter):
         """Test optimization in aggressive mode applies more strategies."""
         mock_counter = Mock()
@@ -341,7 +341,7 @@ End."""
         # Aggressive mode should apply more strategies
         assert len(result.strategies_applied) >= 2
 
-    @patch("seraph_mcp.token_optimization.optimizer.get_token_counter")
+    @patch("src.token_optimization.optimizer.get_token_counter")
     def test_optimize_preserves_code_blocks(self, mock_get_counter):
         """Test that code blocks are preserved during optimization."""
         mock_counter = Mock()
@@ -364,7 +364,7 @@ More text."""
         assert "```python" in result.optimized_content
         assert "def test():" in result.optimized_content
 
-    @patch("seraph_mcp.token_optimization.optimizer.get_token_counter")
+    @patch("src.token_optimization.optimizer.get_token_counter")
     def test_optimize_processing_time_recorded(self, mock_get_counter):
         """Test that processing time is recorded."""
         mock_counter = Mock()
@@ -377,7 +377,7 @@ More text."""
         assert result.processing_time_ms > 0
         assert isinstance(result.processing_time_ms, float)
 
-    @patch("seraph_mcp.token_optimization.optimizer.get_token_counter")
+    @patch("src.token_optimization.optimizer.get_token_counter")
     def test_optimize_empty_content(self, mock_get_counter):
         """Test optimization of empty content."""
         mock_counter = Mock()
@@ -391,7 +391,7 @@ More text."""
         assert result.optimized_tokens == 0
         assert result.reduction_ratio == 0.0
 
-    @patch("seraph_mcp.token_optimization.optimizer.get_token_counter")
+    @patch("src.token_optimization.optimizer.get_token_counter")
     def test_optimize_handles_strategy_errors(self, mock_get_counter, caplog):
         """Test that strategy errors are handled gracefully."""
         mock_counter = Mock()
@@ -466,14 +466,14 @@ class TestSingletonFunction:
 
     def test_get_optimizer_returns_instance(self):
         """Test get_optimizer returns TokenOptimizer instance."""
-        with patch("seraph_mcp.token_optimization.optimizer.get_token_counter"):
+        with patch("src.token_optimization.optimizer.get_token_counter"):
             optimizer = get_optimizer()
 
             assert isinstance(optimizer, TokenOptimizer)
 
     def test_get_optimizer_with_custom_settings(self):
         """Test get_optimizer accepts custom settings."""
-        with patch("seraph_mcp.token_optimization.optimizer.get_token_counter"):
+        with patch("src.token_optimization.optimizer.get_token_counter"):
             optimizer = get_optimizer(
                 quality_threshold=0.85,
                 preserve_code_blocks=False,
@@ -489,7 +489,7 @@ class TestEdgeCases:
     @pytest.fixture
     def optimizer(self):
         """Create a TokenOptimizer instance."""
-        with patch("seraph_mcp.token_optimization.optimizer.get_token_counter"):
+        with patch("src.token_optimization.optimizer.get_token_counter"):
             return TokenOptimizer()
 
     def test_optimize_unicode_content(self, optimizer):
@@ -539,7 +539,7 @@ class TestPerformance:
     @pytest.fixture
     def optimizer(self):
         """Create a TokenOptimizer instance."""
-        with patch("seraph_mcp.token_optimization.optimizer.get_token_counter"):
+        with patch("src.token_optimization.optimizer.get_token_counter"):
             return TokenOptimizer()
 
     def test_optimization_completes_quickly(self, optimizer):

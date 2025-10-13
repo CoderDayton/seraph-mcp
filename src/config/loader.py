@@ -54,17 +54,21 @@ def load_config(
         logger.info("No .env file found, using environment variables only")
 
     # Build configuration from environment variables
+    # Auto-detect cache backend: Redis if REDIS_URL is set, else memory
+    redis_url = os.getenv("REDIS_URL")
+    cache_backend = "redis" if redis_url else "memory"
+
     config_dict = {
         "environment": os.getenv("ENVIRONMENT", "development"),
         "log_level": os.getenv("LOG_LEVEL", "INFO"),
 
 
         "cache": {
-            "backend": os.getenv("CACHE_BACKEND", "memory"),
+            "backend": os.getenv("CACHE_BACKEND", cache_backend),  # Auto-detected
             "ttl_seconds": int(os.getenv("CACHE_TTL_SECONDS", "3600")),
             "max_size": int(os.getenv("CACHE_MAX_SIZE", "1000")),
             "namespace": os.getenv("CACHE_NAMESPACE", "seraph"),
-            "redis_url": os.getenv("REDIS_URL"),
+            "redis_url": redis_url,
             "redis_max_connections": int(os.getenv("REDIS_MAX_CONNECTIONS", "10")),
             "redis_socket_timeout": int(os.getenv("REDIS_SOCKET_TIMEOUT", "5")),
         },
@@ -98,30 +102,40 @@ def load_config(
             "allowed_hosts": [h.strip() for h in os.getenv("ALLOWED_HOSTS", "*").split(",")],
         },
         "providers": {
+            # Auto-enable providers if api_key AND model are both set
             "openai": {
-                "enabled": os.getenv("OPENAI_ENABLED", "false").lower() == "true",
+                "enabled": bool(os.getenv("OPENAI_API_KEY") and os.getenv("OPENAI_MODEL")),
                 "api_key": os.getenv("OPENAI_API_KEY"),
+                "model": os.getenv("OPENAI_MODEL"),
                 "base_url": os.getenv("OPENAI_BASE_URL"),
                 "timeout": float(os.getenv("OPENAI_TIMEOUT", "30.0")),
                 "max_retries": int(os.getenv("OPENAI_MAX_RETRIES", "3")),
             },
             "anthropic": {
-                "enabled": os.getenv("ANTHROPIC_ENABLED", "false").lower() == "true",
+                "enabled": bool(os.getenv("ANTHROPIC_API_KEY") and os.getenv("ANTHROPIC_MODEL")),
                 "api_key": os.getenv("ANTHROPIC_API_KEY"),
+                "model": os.getenv("ANTHROPIC_MODEL"),
                 "base_url": os.getenv("ANTHROPIC_BASE_URL"),
                 "timeout": float(os.getenv("ANTHROPIC_TIMEOUT", "30.0")),
                 "max_retries": int(os.getenv("ANTHROPIC_MAX_RETRIES", "3")),
             },
             "gemini": {
-                "enabled": os.getenv("GEMINI_ENABLED", "false").lower() == "true",
+                "enabled": bool(os.getenv("GEMINI_API_KEY") and os.getenv("GEMINI_MODEL")),
                 "api_key": os.getenv("GEMINI_API_KEY"),
+                "model": os.getenv("GEMINI_MODEL"),
                 "base_url": os.getenv("GEMINI_BASE_URL"),
                 "timeout": float(os.getenv("GEMINI_TIMEOUT", "30.0")),
                 "max_retries": int(os.getenv("GEMINI_MAX_RETRIES", "3")),
             },
             "openai_compatible": {
-                "enabled": os.getenv("OPENAI_COMPATIBLE_ENABLED", "false").lower() == "true",
+                # For openai_compatible, also require base_url
+                "enabled": bool(
+                    os.getenv("OPENAI_COMPATIBLE_API_KEY")
+                    and os.getenv("OPENAI_COMPATIBLE_MODEL")
+                    and os.getenv("OPENAI_COMPATIBLE_BASE_URL")
+                ),
                 "api_key": os.getenv("OPENAI_COMPATIBLE_API_KEY"),
+                "model": os.getenv("OPENAI_COMPATIBLE_MODEL"),
                 "base_url": os.getenv("OPENAI_COMPATIBLE_BASE_URL"),
                 "timeout": float(os.getenv("OPENAI_COMPATIBLE_TIMEOUT", "30.0")),
                 "max_retries": int(os.getenv("OPENAI_COMPATIBLE_MAX_RETRIES", "3")),

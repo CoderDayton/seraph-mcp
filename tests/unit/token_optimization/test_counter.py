@@ -8,7 +8,7 @@ Covers OpenAI, Anthropic, Google, and Mistral models with mocking.
 import pytest
 from unittest.mock import Mock, patch, MagicMock
 
-from seraph_mcp.token_optimization.counter import (
+from src.token_optimization.counter import (
     TokenCounter,
     ModelProvider,
     get_token_counter,
@@ -86,7 +86,7 @@ class TestTokenCounter:
         # Should match "claude-3-opus" prefix
         assert counter._get_provider("claude-3-opus-20240229") == ModelProvider.ANTHROPIC
 
-    @patch("seraph_mcp.token_optimization.counter.tiktoken")
+    @patch("src.token_optimization.counter.tiktoken")
     def test_count_openai_tokens_with_tiktoken(self, mock_tiktoken, counter):
         """Test OpenAI token counting with tiktoken available."""
         # Setup mock encoding
@@ -100,7 +100,7 @@ class TestTokenCounter:
         mock_tiktoken.encoding_for_model.assert_called_once_with("gpt-4")
         mock_encoding.encode.assert_called_once_with("Hello, world!")
 
-    @patch("seraph_mcp.token_optimization.counter.tiktoken")
+    @patch("src.token_optimization.counter.tiktoken")
     def test_count_openai_tokens_caching(self, mock_tiktoken, counter):
         """Test that encodings are cached for reuse."""
         mock_encoding = Mock()
@@ -117,7 +117,7 @@ class TestTokenCounter:
         # Should encode twice
         assert mock_encoding.encode.call_count == 2
 
-    @patch("seraph_mcp.token_optimization.counter.tiktoken")
+    @patch("src.token_optimization.counter.tiktoken")
     def test_count_openai_tokens_fallback_to_cl100k(self, mock_tiktoken, counter):
         """Test fallback to cl100k_base encoding for unknown models."""
         mock_encoding = Mock()
@@ -134,14 +134,14 @@ class TestTokenCounter:
 
     def test_count_openai_tokens_without_tiktoken(self, counter):
         """Test OpenAI token counting falls back to estimation without tiktoken."""
-        with patch("seraph_mcp.token_optimization.counter.tiktoken", None):
+        with patch("src.token_optimization.counter.tiktoken", None):
             counter_no_tiktoken = TokenCounter()
             result = counter_no_tiktoken._count_openai_tokens("Hello world!", "gpt-4")
 
             # Should fall back to estimation (12 chars / 4 = 3 tokens)
             assert result == 3
 
-    @patch("seraph_mcp.token_optimization.counter.tiktoken")
+    @patch("src.token_optimization.counter.tiktoken")
     def test_count_anthropic_tokens(self, mock_tiktoken, counter):
         """Test Anthropic token counting uses cl100k_base approximation."""
         mock_encoding = Mock()
@@ -155,8 +155,8 @@ class TestTokenCounter:
 
     def test_count_anthropic_tokens_without_libraries(self, counter):
         """Test Anthropic counting falls back to estimation without libraries."""
-        with patch("seraph_mcp.token_optimization.counter.tiktoken", None):
-            with patch("seraph_mcp.token_optimization.counter.Anthropic", None):
+        with patch("src.token_optimization.counter.tiktoken", None):
+            with patch("src.token_optimization.counter.Anthropic", None):
                 counter_no_libs = TokenCounter()
                 result = counter_no_libs._count_anthropic_tokens("Hello!", "claude-3-opus")
 
@@ -177,7 +177,7 @@ class TestTokenCounter:
         # Long string (100 chars)
         assert counter._estimate_tokens("a" * 100) == 25
 
-    @patch("seraph_mcp.token_optimization.counter.tiktoken")
+    @patch("src.token_optimization.counter.tiktoken")
     def test_count_tokens_openai_model(self, mock_tiktoken, counter):
         """Test count_tokens with OpenAI model."""
         mock_encoding = Mock()
@@ -188,7 +188,7 @@ class TestTokenCounter:
 
         assert result == 4
 
-    @patch("seraph_mcp.token_optimization.counter.tiktoken")
+    @patch("src.token_optimization.counter.tiktoken")
     def test_count_tokens_anthropic_model(self, mock_tiktoken, counter):
         """Test count_tokens with Anthropic model."""
         mock_encoding = Mock()
@@ -206,7 +206,7 @@ class TestTokenCounter:
         # Should estimate (12 chars / 4 = 3 tokens)
         assert result == 3
 
-    @patch("seraph_mcp.token_optimization.counter.tiktoken")
+    @patch("src.token_optimization.counter.tiktoken")
     def test_get_token_breakdown(self, mock_tiktoken, counter):
         """Test get_token_breakdown returns detailed metadata."""
         mock_encoding = Mock()
@@ -225,14 +225,14 @@ class TestTokenCounter:
 
     def test_get_token_breakdown_estimated(self, counter):
         """Test get_token_breakdown with estimation."""
-        with patch("seraph_mcp.token_optimization.counter.tiktoken", None):
+        with patch("src.token_optimization.counter.tiktoken", None):
             counter_no_tiktoken = TokenCounter()
             result = counter_no_tiktoken.get_token_breakdown("Test", "unknown-model")
 
             assert "token_count" in result
             assert result["method"] == "estimated"
 
-    @patch("seraph_mcp.token_optimization.counter.tiktoken")
+    @patch("src.token_optimization.counter.tiktoken")
     def test_compare_models(self, mock_tiktoken, counter):
         """Test compare_models returns token counts for multiple models."""
         mock_encoding = Mock()
@@ -251,7 +251,7 @@ class TestTokenCounter:
         assert "claude-3-opus" in result
         assert all(isinstance(count, int) for count in result.values())
 
-    @patch("seraph_mcp.token_optimization.counter.tiktoken")
+    @patch("src.token_optimization.counter.tiktoken")
     def test_compare_models_default_models(self, mock_tiktoken, counter):
         """Test compare_models uses default model list."""
         mock_encoding = Mock()
@@ -269,7 +269,7 @@ class TestTokenCounter:
         counter1 = TokenCounter()
         counter2 = TokenCounter()
 
-        with patch("seraph_mcp.token_optimization.counter.tiktoken") as mock_tiktoken:
+        with patch("src.token_optimization.counter.tiktoken") as mock_tiktoken:
             mock_encoding = Mock()
             mock_encoding.encode.return_value = [1, 2, 3]
             mock_tiktoken.encoding_for_model.return_value = mock_encoding
@@ -291,7 +291,7 @@ class TestSingletonFunctions:
 
         assert counter1 is counter2
 
-    @patch("seraph_mcp.token_optimization.counter.tiktoken")
+    @patch("src.token_optimization.counter.tiktoken")
     def test_count_tokens_convenience_function(self, mock_tiktoken):
         """Test count_tokens convenience function."""
         mock_encoding = Mock()
@@ -311,7 +311,7 @@ class TestErrorHandling:
         """Create a TokenCounter instance."""
         return TokenCounter()
 
-    @patch("seraph_mcp.token_optimization.counter.tiktoken")
+    @patch("src.token_optimization.counter.tiktoken")
     def test_encoding_error_falls_back_to_estimation(self, mock_tiktoken, counter):
         """Test that encoding errors fall back to estimation."""
         mock_tiktoken.encoding_for_model.side_effect = Exception("Encoding error")
@@ -363,7 +363,7 @@ class TestPerformance:
         """Create a TokenCounter instance."""
         return TokenCounter()
 
-    @patch("seraph_mcp.token_optimization.counter.tiktoken")
+    @patch("src.token_optimization.counter.tiktoken")
     def test_caching_improves_performance(self, mock_tiktoken, counter):
         """Test that encoding caching reduces function calls."""
         mock_encoding = Mock()
@@ -379,7 +379,7 @@ class TestPerformance:
         # But should encode 10 times
         assert mock_encoding.encode.call_count == 10
 
-    @patch("seraph_mcp.token_optimization.counter.tiktoken")
+    @patch("src.token_optimization.counter.tiktoken")
     def test_different_models_create_separate_cache_entries(self, mock_tiktoken, counter):
         """Test that different models get separate cache entries."""
         mock_encoding = Mock()

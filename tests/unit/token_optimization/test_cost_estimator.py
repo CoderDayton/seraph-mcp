@@ -9,7 +9,7 @@ import pytest
 from datetime import datetime
 from unittest.mock import Mock, patch
 
-from seraph_mcp.token_optimization.cost_estimator import (
+from src.token_optimization.cost_estimator import (
     CostEstimator,
     ModelPricing,
     PricingTier,
@@ -101,7 +101,7 @@ class TestCostEstimator:
     @pytest.fixture
     def estimator(self):
         """Create a CostEstimator instance."""
-        with patch("seraph_mcp.token_optimization.cost_estimator.get_token_counter") as mock:
+        with patch("src.token_optimization.cost_estimator.get_token_counter") as mock:
             mock_counter = Mock()
             mock_counter.count_tokens.return_value = 100
             mock.return_value = mock_counter
@@ -169,7 +169,7 @@ class TestCostEstimator:
 
         assert pricing is None
 
-    @patch("seraph_mcp.token_optimization.cost_estimator.get_token_counter")
+    @patch("src.token_optimization.cost_estimator.get_token_counter")
     def test_estimate_cost_basic(self, mock_get_counter):
         """Test basic cost estimation."""
         mock_counter = Mock()
@@ -195,7 +195,7 @@ class TestCostEstimator:
         assert "total_cost_usd" in result
         assert result["total_cost_usd"] > 0
 
-    @patch("seraph_mcp.token_optimization.cost_estimator.get_token_counter")
+    @patch("src.token_optimization.cost_estimator.get_token_counter")
     def test_estimate_cost_estimates_output_tokens(self, mock_get_counter):
         """Test that output tokens are estimated if not provided."""
         mock_counter = Mock()
@@ -214,7 +214,7 @@ class TestCostEstimator:
         assert result["output_tokens"] > 0
         assert result["output_tokens"] == int(1000 * 0.4)
 
-    @patch("seraph_mcp.token_optimization.cost_estimator.get_token_counter")
+    @patch("src.token_optimization.cost_estimator.get_token_counter")
     def test_estimate_cost_unknown_model(self, mock_get_counter):
         """Test cost estimation with unknown model."""
         mock_counter = Mock()
@@ -231,7 +231,7 @@ class TestCostEstimator:
         assert "error" in result
         assert "Pricing data not available" in result["error"]
 
-    @patch("seraph_mcp.token_optimization.cost_estimator.get_token_counter")
+    @patch("src.token_optimization.cost_estimator.get_token_counter")
     def test_estimate_cost_cost_breakdown(self, mock_get_counter):
         """Test that cost breakdown is included."""
         mock_counter = Mock()
@@ -253,7 +253,7 @@ class TestCostEstimator:
         total = result["input_cost_usd"] + result["output_cost_usd"]
         assert abs(total - result["total_cost_usd"]) < 0.000001  # Float precision
 
-    @patch("seraph_mcp.token_optimization.cost_estimator.get_token_counter")
+    @patch("src.token_optimization.cost_estimator.get_token_counter")
     def test_estimate_cost_pricing_details(self, mock_get_counter):
         """Test that pricing details are included."""
         mock_counter = Mock()
@@ -271,7 +271,7 @@ class TestCostEstimator:
         assert "input_per_1k" in result["pricing"]
         assert "output_per_1k" in result["pricing"]
 
-    @patch("seraph_mcp.token_optimization.cost_estimator.get_token_counter")
+    @patch("src.token_optimization.cost_estimator.get_token_counter")
     def test_compare_model_costs_basic(self, mock_get_counter):
         """Test basic model cost comparison."""
         mock_counter = Mock()
@@ -290,7 +290,7 @@ class TestCostEstimator:
         assert "most_expensive" in result
         assert "potential_savings" in result
 
-    @patch("seraph_mcp.token_optimization.cost_estimator.get_token_counter")
+    @patch("src.token_optimization.cost_estimator.get_token_counter")
     def test_compare_model_costs_sorted_by_cost(self, mock_get_counter):
         """Test that comparison results are sorted by cost."""
         mock_counter = Mock()
@@ -309,7 +309,7 @@ class TestCostEstimator:
         for i in range(len(estimates) - 1):
             assert estimates[i]["total_cost_usd"] <= estimates[i + 1]["total_cost_usd"]
 
-    @patch("seraph_mcp.token_optimization.cost_estimator.get_token_counter")
+    @patch("src.token_optimization.cost_estimator.get_token_counter")
     def test_compare_model_costs_uses_defaults(self, mock_get_counter):
         """Test that default model list is used when not specified."""
         mock_counter = Mock()
@@ -322,7 +322,7 @@ class TestCostEstimator:
         # Should use default models
         assert len(result["estimates"]) > 0
 
-    @patch("seraph_mcp.token_optimization.cost_estimator.get_token_counter")
+    @patch("src.token_optimization.cost_estimator.get_token_counter")
     def test_compare_model_costs_savings_calculation(self, mock_get_counter):
         """Test that savings are calculated correctly."""
         mock_counter = Mock()
@@ -343,7 +343,7 @@ class TestCostEstimator:
         assert savings["absolute_usd"] >= 0
         assert savings["percentage"] >= 0
 
-    @patch("seraph_mcp.token_optimization.cost_estimator.get_token_counter")
+    @patch("src.token_optimization.cost_estimator.get_token_counter")
     def test_compare_model_costs_recommendation(self, mock_get_counter):
         """Test that a recommendation is generated."""
         mock_counter = Mock()
@@ -360,7 +360,7 @@ class TestCostEstimator:
         assert isinstance(result["recommendation"], str)
         assert len(result["recommendation"]) > 0
 
-    @patch("seraph_mcp.token_optimization.cost_estimator.get_token_counter")
+    @patch("src.token_optimization.cost_estimator.get_token_counter")
     def test_calculate_monthly_cost(self, mock_get_counter):
         """Test monthly cost calculation."""
         mock_get_counter.return_value = Mock()
@@ -383,7 +383,7 @@ class TestCostEstimator:
         # Monthly should be daily * 30
         assert abs(result["monthly_cost_usd"] - result["daily_cost_usd"] * 30) < 0.01
 
-    @patch("seraph_mcp.token_optimization.cost_estimator.get_token_counter")
+    @patch("src.token_optimization.cost_estimator.get_token_counter")
     def test_calculate_monthly_cost_breakdown(self, mock_get_counter):
         """Test that monthly cost includes detailed breakdown."""
         mock_get_counter.return_value = Mock()
@@ -403,7 +403,7 @@ class TestCostEstimator:
         assert "daily_output_cost" in breakdown
         assert "avg_cost_per_request" in breakdown
 
-    @patch("seraph_mcp.token_optimization.cost_estimator.get_token_counter")
+    @patch("src.token_optimization.cost_estimator.get_token_counter")
     def test_calculate_monthly_cost_unknown_model(self, mock_get_counter):
         """Test monthly cost with unknown model."""
         mock_get_counter.return_value = Mock()
@@ -499,14 +499,14 @@ class TestSingletonFunction:
 
     def test_get_cost_estimator_returns_instance(self):
         """Test get_cost_estimator returns CostEstimator instance."""
-        with patch("seraph_mcp.token_optimization.cost_estimator.get_token_counter"):
+        with patch("src.token_optimization.cost_estimator.get_token_counter"):
             estimator = get_cost_estimator()
 
             assert isinstance(estimator, CostEstimator)
 
     def test_get_cost_estimator_singleton(self):
         """Test get_cost_estimator returns singleton instance."""
-        with patch("seraph_mcp.token_optimization.cost_estimator.get_token_counter"):
+        with patch("src.token_optimization.cost_estimator.get_token_counter"):
             estimator1 = get_cost_estimator()
             estimator2 = get_cost_estimator()
 
@@ -519,13 +519,13 @@ class TestRealWorldScenarios:
     @pytest.fixture
     def estimator(self):
         """Create a CostEstimator instance."""
-        with patch("seraph_mcp.token_optimization.cost_estimator.get_token_counter") as mock:
+        with patch("src.token_optimization.cost_estimator.get_token_counter") as mock:
             mock_counter = Mock()
             mock_counter.count_tokens.return_value = 1000
             mock.return_value = mock_counter
             return CostEstimator()
 
-    @patch("seraph_mcp.token_optimization.cost_estimator.get_token_counter")
+    @patch("src.token_optimization.cost_estimator.get_token_counter")
     def test_cost_comparison_for_api_migration(self, mock_get_counter, estimator):
         """Test comparing costs when migrating between providers."""
         mock_counter = Mock()
@@ -543,7 +543,7 @@ class TestRealWorldScenarios:
         assert result["cheapest"] is not None
         assert result["potential_savings"] is not None
 
-    @patch("seraph_mcp.token_optimization.cost_estimator.get_token_counter")
+    @patch("src.token_optimization.cost_estimator.get_token_counter")
     def test_budget_planning(self, mock_get_counter, estimator):
         """Test budget planning for production deployment."""
         mock_get_counter.return_value = Mock()
@@ -559,7 +559,7 @@ class TestRealWorldScenarios:
         assert result["monthly_cost_usd"] > 0
         assert result["annual_cost_usd"] == result["monthly_cost_usd"] * 12
 
-    @patch("seraph_mcp.token_optimization.cost_estimator.get_token_counter")
+    @patch("src.token_optimization.cost_estimator.get_token_counter")
     def test_cost_optimization_opportunity(self, mock_get_counter, estimator):
         """Test identifying cost optimization opportunities."""
         mock_counter = Mock()
@@ -584,13 +584,13 @@ class TestEdgeCases:
     @pytest.fixture
     def estimator(self):
         """Create a CostEstimator instance."""
-        with patch("seraph_mcp.token_optimization.cost_estimator.get_token_counter") as mock:
+        with patch("src.token_optimization.cost_estimator.get_token_counter") as mock:
             mock_counter = Mock()
             mock_counter.count_tokens.return_value = 0
             mock.return_value = mock_counter
             return CostEstimator()
 
-    @patch("seraph_mcp.token_optimization.cost_estimator.get_token_counter")
+    @patch("src.token_optimization.cost_estimator.get_token_counter")
     def test_zero_token_cost(self, mock_get_counter):
         """Test cost estimation with zero tokens."""
         mock_counter = Mock()
@@ -604,7 +604,7 @@ class TestEdgeCases:
         assert result["output_tokens"] == 0
         assert result["total_cost_usd"] == 0.0
 
-    @patch("seraph_mcp.token_optimization.cost_estimator.get_token_counter")
+    @patch("src.token_optimization.cost_estimator.get_token_counter")
     def test_very_large_token_count(self, mock_get_counter):
         """Test cost estimation with very large token counts."""
         mock_counter = Mock()

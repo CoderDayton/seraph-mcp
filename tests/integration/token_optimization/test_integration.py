@@ -10,8 +10,8 @@ import asyncio
 from unittest.mock import Mock, patch, AsyncMock
 from typing import Any, Dict
 
-from seraph_mcp.token_optimization.tools import TokenOptimizationTools
-from seraph_mcp.token_optimization.config import TokenOptimizationConfig
+from src.token_optimization.tools import TokenOptimizationTools
+from src.token_optimization.config import TokenOptimizationConfig
 from src.config.schemas import FeatureFlags
 
 
@@ -29,8 +29,8 @@ class TestTokenOptimizationIntegration:
             optimization_strategies=["whitespace", "redundancy", "compression"],
         )
 
-        with patch("seraph_mcp.token_optimization.tools.create_cache") as mock_cache_factory:
-            with patch("seraph_mcp.token_optimization.tools.get_observability") as mock_obs_factory:
+        with patch("src.token_optimization.tools.create_cache") as mock_cache_factory:
+            with patch("src.token_optimization.tools.get_observability") as mock_obs_factory:
                 # Mock cache
                 mock_cache = AsyncMock()
                 mock_cache.get.return_value = None
@@ -98,7 +98,7 @@ class TestTokenOptimizationIntegration:
         content = "Test content"
 
         with patch.object(tools.optimizer, "optimize") as mock_optimize:
-            from seraph_mcp.token_optimization.optimizer import OptimizationResult
+            from src.token_optimization.optimizer import OptimizationResult
 
             # Simulate low quality result
             mock_result = OptimizationResult(
@@ -262,8 +262,8 @@ class TestFeatureFlagIntegration:
         """Test tools work when feature is enabled."""
         config = TokenOptimizationConfig(enabled=True)
 
-        with patch("seraph_mcp.token_optimization.tools.create_cache"):
-            with patch("seraph_mcp.token_optimization.tools.get_observability"):
+        with patch("src.token_optimization.tools.create_cache"):
+            with patch("src.token_optimization.tools.get_observability"):
                 tools = TokenOptimizationTools(config=config)
 
                 with patch.object(tools.counter, "count_tokens", return_value=10):
@@ -277,8 +277,8 @@ class TestFeatureFlagIntegration:
         """Test tools return error when feature is disabled."""
         config = TokenOptimizationConfig(enabled=False)
 
-        with patch("seraph_mcp.token_optimization.tools.create_cache"):
-            with patch("seraph_mcp.token_optimization.tools.get_observability"):
+        with patch("src.token_optimization.tools.create_cache"):
+            with patch("src.token_optimization.tools.get_observability"):
                 tools = TokenOptimizationTools(config=config)
 
                 result = tools.optimize_tokens(content="Test", model="gpt-4")
@@ -293,8 +293,8 @@ class TestConfigurationManagement:
     @pytest.mark.asyncio
     async def test_default_configuration(self):
         """Test tools work with default configuration."""
-        with patch("seraph_mcp.token_optimization.tools.create_cache"):
-            with patch("seraph_mcp.token_optimization.tools.get_observability"):
+        with patch("src.token_optimization.tools.create_cache"):
+            with patch("src.token_optimization.tools.get_observability"):
                 tools = TokenOptimizationTools()
 
                 assert tools.config.enabled is True
@@ -311,8 +311,8 @@ class TestConfigurationManagement:
             cache_optimizations=False,
         )
 
-        with patch("seraph_mcp.token_optimization.tools.create_cache"):
-            with patch("seraph_mcp.token_optimization.tools.get_observability"):
+        with patch("src.token_optimization.tools.create_cache"):
+            with patch("src.token_optimization.tools.get_observability"):
                 tools = TokenOptimizationTools(config=config)
 
                 assert tools.config.default_reduction_target == 0.30
@@ -369,8 +369,8 @@ class TestErrorRecovery:
         """Create TokenOptimizationTools instance."""
         config = TokenOptimizationConfig(enabled=True)
 
-        with patch("seraph_mcp.token_optimization.tools.create_cache"):
-            with patch("seraph_mcp.token_optimization.tools.get_observability"):
+        with patch("src.token_optimization.tools.create_cache"):
+            with patch("src.token_optimization.tools.get_observability"):
                 yield TokenOptimizationTools(config=config)
 
     @pytest.mark.asyncio
@@ -417,8 +417,8 @@ class TestCacheIntegration:
         mock_cache.get.return_value = None
         mock_cache.set.return_value = True
 
-        with patch("seraph_mcp.token_optimization.tools.create_cache", return_value=mock_cache):
-            with patch("seraph_mcp.token_optimization.tools.get_observability"):
+        with patch("src.token_optimization.tools.create_cache", return_value=mock_cache):
+            with patch("src.token_optimization.tools.get_observability"):
                 tools = TokenOptimizationTools(config=config)
                 tools.cache = mock_cache
                 yield tools
@@ -445,8 +445,8 @@ class TestCacheIntegration:
 
         mock_cache = AsyncMock()
 
-        with patch("seraph_mcp.token_optimization.tools.create_cache", return_value=mock_cache):
-            with patch("seraph_mcp.token_optimization.tools.get_observability"):
+        with patch("src.token_optimization.tools.create_cache", return_value=mock_cache):
+            with patch("src.token_optimization.tools.get_observability"):
                 tools = TokenOptimizationTools(config=config)
                 tools.cache = mock_cache
 
@@ -465,8 +465,8 @@ class TestRealWorldScenarios:
         """Create TokenOptimizationTools instance."""
         config = TokenOptimizationConfig(enabled=True)
 
-        with patch("seraph_mcp.token_optimization.tools.create_cache"):
-            with patch("seraph_mcp.token_optimization.tools.get_observability"):
+        with patch("src.token_optimization.tools.create_cache"):
+            with patch("src.token_optimization.tools.get_observability"):
                 yield TokenOptimizationTools(config=config)
 
     @pytest.mark.asyncio

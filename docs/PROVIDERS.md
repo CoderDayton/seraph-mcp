@@ -83,10 +83,10 @@ GEMINI_API_KEY=AIza...
 GEMINI_TIMEOUT=30.0
 GEMINI_MAX_RETRIES=3
 
-# Custom OpenAI-Compatible Endpoint
+# OpenAI-Compatible Providers (Together AI, Fireworks, Anyscale, DeepInfra, local LLMs, etc)
 OPENAI_COMPATIBLE_ENABLED=true
-OPENAI_COMPATIBLE_BASE_URL=http://localhost:1234/v1
-OPENAI_COMPATIBLE_API_KEY=not-needed  # Optional for local services
+OPENAI_COMPATIBLE_BASE_URL=https://api.together.xyz/v1  # Or any OpenAI-compatible endpoint
+OPENAI_COMPATIBLE_API_KEY=your-api-key-here  # Required for most services, optional for local
 OPENAI_COMPATIBLE_TIMEOUT=60.0
 OPENAI_COMPATIBLE_MAX_RETRIES=3
 ```
@@ -601,7 +601,7 @@ config = ProviderConfig(
 - `src/providers/openai_provider.py` - OpenAI GPT models
 - `src/providers/anthropic_provider.py` - Anthropic Claude models
 - `src/providers/gemini_provider.py` - Google Gemini models
-- `src/providers/openai_compatible.py` - Custom/local models
+- `src/providers/openai_compatible.py` - Any OpenAI-compatible provider (Together AI, Fireworks, Anyscale, DeepInfra, local LLMs, etc)
 
 ### Examples
 

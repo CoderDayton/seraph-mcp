@@ -27,22 +27,22 @@ requires-python = ">=3.10"
 # All dependencies included in main package (monolithic architecture)
 dependencies = [
     # Core MCP server and configuration
-    "fastmcp>=2.0.0",           # MCP stdio server
-    "pydantic>=2.0.0",          # Typed configuration and validation
+    "fastmcp>=2.0.0", # MCP stdio server
+    "pydantic>=2.0.0", # Typed configuration and validation
     "pydantic-settings>=2.0.0", # Settings management
-    "python-dotenv>=1.0.0",     # Environment variables
-    "httpx>=0.25.0",            # HTTP client for Models.dev API
-
+    "python-dotenv>=1.0.0", # Environment variables
+    "httpx>=0.25.0", # HTTP client for Models.dev API
     # Cache and storage
-    "redis>=5.0.0",             # Redis backend for caching
-
+    "redis>=5.0.0", # Redis backend for caching
     # AI Model Providers (all included)
-    "openai>=1.0.0",            # OpenAI GPT models
-    "anthropic>=0.25.0",        # Anthropic Claude models
-    "google-genai>=0.2.0",      # Google Gemini models (newer SDK)
-
+    "openai>=1.0.0", # OpenAI GPT models
+    "anthropic>=0.25.0", # Anthropic Claude models
+    "google-genai>=0.2.0", # Google Gemini models (newer SDK)
     # Token optimization
-    "tiktoken>=0.5.0",          # OpenAI token counting
+    "tiktoken>=0.5.0", # OpenAI token counting
+    "llmlingua>=0.2.2",
+    "langchain>=0.3.27",
+    "blake3>=1.0.7",
 ]
 
 [project.optional-dependencies]
@@ -73,10 +73,9 @@ all = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/seraph-mcp/seraph-mcp"
-Repository = "https://github.com/seraph-mcp/seraph-mcp"
+Repository = "https://github.com/coderdayton/seraph-mcp"
 Documentation = "https://seraph-mcp.readthedocs.io"
-Issues = "https://github.com/seraph-mcp/seraph-mcp/issues"
+Issues = "https://github.com/coderdayton/seraph-mcp/issues"
 
 [tool.setuptools.packages.find]
 where = ["src"]
