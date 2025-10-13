@@ -1,0 +1,41 @@
+name: Pre-commit
+
+on:
+    pull_request:
+        branches: [main, develop]
+    push:
+        branches: [main, develop]
+
+jobs:
+    pre-commit:
+        name: Run Pre-commit Hooks
+        runs-on: ubuntu-latest
+        steps:
+            - name: Checkout code
+              uses: actions/checkout@v4
+
+            - name: Set up Python
+              uses: actions/setup-python@v5
+              with:
+                  python-version: "3.11"
+
+            - name: Install pre-commit
+              run: |
+                  pip install pre-commit
+
+            - name: Cache pre-commit environments
+              uses: actions/cache@v4
+              with:
+                  path: ~/.cache/pre-commit
+                  key: pre-commit-${{ runner.os }}-${{ hashFiles('.pre-commit-config.yaml') }}
+                  restore-keys: |
+                      pre-commit-${{ runner.os }}-
+
+            - name: Run pre-commit on all files
+              run: |
+                  pre-commit run --all-files --show-diff-on-failure
+
+            - name: Annotate PR with issues
+              if: failure()
+              run: |
+                  echo "::error::Pre-commit hooks failed. Run 'uv run pre-commit run --all-files' locally to fix issues."

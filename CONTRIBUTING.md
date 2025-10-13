@@ -113,8 +113,9 @@ Pre-commit hooks run automatically on `git commit` and check:
 - ✅ **Bandit** - Security vulnerability scanning
 - ✅ **Secret detection** - Prevent committing secrets
 - ✅ **File validation** - JSON, YAML, TOML syntax
-- ✅ **Markdown linting** - Documentation quality
 - ✅ **Basic checks** - Trailing whitespace, file endings, merge conflicts
+
+**Note:** Pre-commit hooks also run automatically on all pull requests via GitHub Actions, so contributors who haven't set up hooks locally will still have their code checked.
 
 #### Manual Pre-commit Usage
 
@@ -302,7 +303,12 @@ When reporting issues, please include:
    - Link to related issues
    - Screenshots (if UI changes)
 
-6. **Address review feedback**
+6. **CI Checks**
+   - GitHub Actions will automatically run pre-commit hooks on your PR
+   - All checks must pass before merging
+   - Fix any issues reported by the automated checks
+
+7. **Address review feedback**
    - Respond to comments
    - Make requested changes
    - Keep commits focused
@@ -312,7 +318,7 @@ When reporting issues, please include:
 - **Documentation**: See `docs/` directory and `CLAUDE.md`
 - **Architecture**: Read `docs/SDD.md` for system design decisions
 - **Examples**: Check `examples/` directory for usage patterns
-- **CI/CD**: Review `.github/workflows/ci.yml` for automated checks
+- **CI/CD**: Review `.github/workflows/ci.yml` and `.github/workflows/pre-commit.yml` for automated checks
 
 ## 💡 Tips for Contributors
 
