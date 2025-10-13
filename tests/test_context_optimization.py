@@ -119,7 +119,8 @@ async def test_optimizer_timeout_handling():
 
     optimizer = ContextOptimizer(config=config, provider=SlowProvider())
 
-    content = "This content would take too long to optimize."
+    # Use content longer than 100 tokens to avoid passthrough
+    content = "This content would take too long to optimize. " * 50  # ~500 tokens
     result = await optimizer.optimize(content, timeout_ms=1.0)
 
     # Should rollback due to timeout
