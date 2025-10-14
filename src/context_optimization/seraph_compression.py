@@ -38,7 +38,7 @@ logger = logging.getLogger(__name__)
 
 # ---------- Required dependencies -------------------------------------------------
 try:
-    import tiktoken  # type: ignore[import-untyped]
+    import tiktoken
 
     _HAS_TIKTOKEN = True
 except ImportError as e:
@@ -50,7 +50,7 @@ except ImportError as e:
     _HAS_TIKTOKEN = False
 
 try:
-    import blake3  # type: ignore[import-untyped]
+    import blake3
 
     _HAS_BLAKE3 = True
 except ImportError as e:
@@ -70,12 +70,12 @@ except ImportError as e:
         "Required dependency 'llmlingua' is missing. Install with: pip install llmlingua>=0.2.2",
         extra={"package": "llmlingua", "error": str(e)},
     )
-    LLMLingua = None  # type: ignore[assignment, misc]
+    LLMLingua = None
     _HAS_LLMLINGUA = False
 
 try:
     # LangChain contextual compression - verify basic import works
-    import langchain  # noqa: F401  # type: ignore[import-untyped]
+    import langchain  # noqa: F401
 
     _HAS_LANGCHAIN = True
 except ImportError as e:
@@ -87,8 +87,8 @@ except ImportError as e:
 
 # ---------- Optional dependencies -------------------------------------------------
 try:
-    from sentence_transformers import SentenceTransformer  # type: ignore[import-untyped]
-    from sentence_transformers import util as st_util  # type: ignore[import-untyped]
+    from sentence_transformers import SentenceTransformer
+    from sentence_transformers import util as st_util
 
     _HAS_EMBED = True
 except ImportError:
@@ -172,10 +172,10 @@ class BM25:
     k1: float = 1.5
     b: float = 0.75
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         self.N = len(self.docs)
         self.avgdl = sum(len(d) for d in self.docs) / max(1, self.N)
-        self.df = Counter()
+        self.df: Counter[str] = Counter()
         for d in self.docs:
             self.df.update(set(d))
         self.idf = {t: math.log(1 + (self.N - df + 0.5) / (df + 0.5)) for t, df in self.df.items()}
@@ -265,7 +265,7 @@ class Tier1500x:
         return chunks
 
     def dedup(self, chunks: list[Chunk], hamm_thresh: int = 3) -> list[Chunk]:
-        seen = []
+        seen: list[int] = []
         out = []
         for c in chunks:
             is_dup = any(hamm_distance64(c.simhash, h) <= hamm_thresh for h in seen)
@@ -284,7 +284,7 @@ class Tier1500x:
         anchors: list[Anchor] = []
         aid_seq = 0
 
-        def mk_aid():
+        def mk_aid() -> str:
             nonlocal aid_seq
             aid_seq += 1
             return f"A{aid_seq:05d}"
@@ -338,7 +338,7 @@ class Tier1500x:
         bm25 = BM25(docs)
         # pseudo-query: all rare terms
         idf = bm25.idf
-        rare_terms = sorted(idf.items(), key=lambda kv: kv[1], reverse=True)[:64]  # type: ignore[arg-type]
+        rare_terms = sorted(idf.items(), key=lambda kv: kv[1], reverse=True)[:64]
         q = [t for t, _ in rare_terms]
         scores = {}
         anchor_by_chunk = defaultdict(list)
@@ -447,6 +447,7 @@ class Tier2DCP:
         self.budget_ratio = budget_ratio
         self.neighbor_bonus = neighbor_bonus
         self.use_embeddings = use_embeddings and _HAS_EMBED
+        self._embed: SentenceTransformer | None
         if self.use_embeddings and SentenceTransformer is not None:
             self._embed = SentenceTransformer("all-MiniLM-L6-v2")
         else:
@@ -461,7 +462,7 @@ class Tier2DCP:
         bm = BM25(docs if docs else [[]])
         # pseudo-query: union of rare tokens
         idf = bm.idf
-        q = [t for t, _ in sorted(idf.items(), key=lambda kv: kv[1], reverse=True)[:64]]  # type: ignore[arg-type]
+        q = [t for t, _ in sorted(idf.items(), key=lambda kv: kv[1], reverse=True)[:64]]
         return [bm.score(q, i) for i in range(len(sentences))]
 
     def novelty(self, chosen_embeds: list[Any], cand_embed: Any, cand_tokens: set[Any]) -> float:

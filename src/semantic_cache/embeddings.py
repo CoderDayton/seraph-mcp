@@ -137,7 +137,8 @@ class EmbeddingGenerator:
             raise RuntimeError("Local model not initialized")
         try:
             embedding = self._local_model.encode(text, convert_to_numpy=True)
-            return embedding.tolist()
+            result: list[float] = embedding.tolist()
+            return result
         except Exception as e:
             raise RuntimeError(f"Failed to generate local embedding: {e}") from e
 
@@ -156,11 +157,12 @@ class EmbeddingGenerator:
             raise RuntimeError("OpenAI provider not initialized")
         try:
             # Use OpenAI's embeddings endpoint directly
-            response = await self._provider.client.embeddings.create(  # type: ignore[attr-defined]
+            response = await self._provider.client.embeddings.create(
                 model=self.model_name,
                 input=text,
             )
-            return response.data[0].embedding
+            result: list[float] = response.data[0].embedding
+            return result
         except Exception as e:
             raise RuntimeError(f"Failed to generate OpenAI embedding: {e}") from e
 
@@ -170,11 +172,12 @@ class EmbeddingGenerator:
             raise RuntimeError("OpenAI-compatible provider not initialized")
         try:
             # OpenAI-compatible endpoints support embeddings too
-            response = await self._provider.client.embeddings.create(  # type: ignore[attr-defined]
+            response = await self._provider.client.embeddings.create(
                 model=self.model_name,
                 input=text,
             )
-            return response.data[0].embedding
+            result: list[float] = response.data[0].embedding
+            return result
         except Exception as e:
             raise RuntimeError(f"Failed to generate embedding via compatible endpoint: {e}") from e
 
@@ -204,7 +207,8 @@ class EmbeddingGenerator:
             raise RuntimeError("Local model not initialized")
         try:
             embeddings = self._local_model.encode(texts, convert_to_numpy=True)
-            return embeddings.tolist()
+            result: list[list[float]] = embeddings.tolist()
+            return result
         except Exception as e:
             raise RuntimeError(f"Failed to generate batch embeddings: {e}") from e
 

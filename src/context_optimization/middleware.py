@@ -254,7 +254,8 @@ class OptimizedProvider:
                         "optimization_time_ms": optimization_result.optimization_time_ms,
                     }
 
-            return response
+            result: dict[str, Any] = response
+            return result
 
         except Exception as e:
             logger.error(f"Provider call error: {e}")
@@ -269,7 +270,7 @@ class OptimizedProvider:
         """
         optimizer_stats = self.optimizer.get_stats()
 
-        return {
+        result: dict[str, Any] = {
             "middleware": self.middleware_stats,
             "optimizer": optimizer_stats,
             "optimization_rate": (
@@ -278,8 +279,9 @@ class OptimizedProvider:
                 else 0.0
             ),
         }
+        return result
 
-    def reset_stats(self):
+    def reset_stats(self) -> None:
         """Reset all statistics"""
         self.middleware_stats = {
             "total_calls": 0,
@@ -289,7 +291,7 @@ class OptimizedProvider:
         }
 
     # Proxy other provider methods
-    def __getattr__(self, name: str):
+    def __getattr__(self, name: str) -> Any:
         """Proxy unknown methods to base provider"""
         return getattr(self.provider, name)
 

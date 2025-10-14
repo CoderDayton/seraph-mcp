@@ -216,7 +216,7 @@ class SeraphConfig(BaseModel):
 
     # Context Optimization (lazy-loaded to avoid import issues)
     @property
-    def context_optimization(self):
+    def context_optimization(self) -> Any:
         """Load context optimization config on demand."""
         from ..context_optimization.config import load_config as load_context_config
 

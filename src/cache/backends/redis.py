@@ -79,8 +79,8 @@ class RedisCacheBackend(CacheInterface):
 
         # Create Redis client (lazy connection; connects on first command)
         # Type annotation accounts for decode_responses setting (Union type from from_url)
-        self._client = Redis.from_url(
-            redis_url,
+        self._client = Redis.from_url(  # type: ignore[call-overload]
+            url=redis_url,
             decode_responses=decode_responses,
             max_connections=max_connections,
             socket_timeout=socket_timeout,

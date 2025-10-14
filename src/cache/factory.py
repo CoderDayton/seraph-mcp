@@ -63,7 +63,7 @@ def _create_redis_cache(config: CacheConfig) -> CacheInterface:
 
     # Lazy import to avoid hard dependency when memory backend is used
     try:
-        from .backends.redis import RedisCacheBackend  # type: ignore
+        from .backends.redis import RedisCacheBackend
     except ImportError as e:
         logger.error(
             "Redis backend selected but redis client is not installed",

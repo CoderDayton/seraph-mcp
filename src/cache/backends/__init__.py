@@ -7,7 +7,7 @@ Exports available cache backend implementations.
 from .memory import MemoryCacheBackend
 
 try:
-    from .redis import RedisCacheBackend  # type: ignore
+    from .redis import RedisCacheBackend
 except Exception:
     RedisCacheBackend = None  # type: ignore
 

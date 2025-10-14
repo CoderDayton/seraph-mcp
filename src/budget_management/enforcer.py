@@ -39,7 +39,7 @@ class BudgetEnforcer:
         """
         self.config = config
         self.tracker = tracker
-        self._alert_state: dict[str, set[float]] = {}  # Track which thresholds have been alerted
+        self._alert_state: dict[str, float] = {}  # Track alert timestamps for thresholds
 
     def check_budget(
         self,

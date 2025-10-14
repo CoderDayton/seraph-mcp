@@ -85,6 +85,7 @@ class ContextOptimizer:
         self.budget_tracker: Any | None = budget_tracker
 
         # Token counter
+        self.encoding: Any
         try:
             self.encoding = tiktoken.get_encoding("cl100k_base")
         except Exception:
@@ -495,7 +496,7 @@ class ContextOptimizer:
             rollback_occurred=False,
         )
 
-    def _update_stats(self, result: OptimizationResult):
+    def _update_stats(self, result: OptimizationResult) -> None:
         """Update running statistics"""
         total_opts = self.stats["total_optimizations"]
         if not isinstance(total_opts, int):
@@ -521,6 +522,8 @@ class ContextOptimizer:
 
             # Running average for quality
             n = self.stats["successful_optimizations"]
+            if not isinstance(n, int):
+                raise TypeError(f"successful_optimizations must be int for averaging, got {type(n)}")
             current_avg_quality = self.stats["avg_quality_score"]
             if not isinstance(current_avg_quality, float):
                 raise TypeError(f"avg_quality_score must be float, got {type(current_avg_quality)}")
@@ -532,7 +535,7 @@ class ContextOptimizer:
                 raise TypeError(f"avg_reduction_percentage must be float, got {type(current_avg_reduction)}")
             self.stats["avg_reduction_percentage"] = (current_avg_reduction * (n - 1) + result.reduction_percentage) / n
 
-    async def _store_feedback(self, result: OptimizationResult):
+    async def _store_feedback(self, result: OptimizationResult) -> None:
         """Store feedback for adaptive learning (async)"""
         try:
             # Calculate success score
@@ -573,7 +576,7 @@ class ContextOptimizer:
             "cache_size": len(self.cache),
         }
 
-    def clear_cache(self):
+    def clear_cache(self) -> None:
         """Clear optimization caches (both AI and Seraph)"""
         self.cache.clear()
         self.seraph_cache.clear()
@@ -615,7 +618,7 @@ class ContextOptimizer:
         cost_savings = (tokens_saved / 1_000_000) * price_per_million
         return round(cost_savings, 6)
 
-    async def _record_budget_savings(self, result: OptimizationResult):
+    async def _record_budget_savings(self, result: OptimizationResult) -> None:
         """Record cost savings in budget tracker"""
         if not self.budget_tracker:
             return

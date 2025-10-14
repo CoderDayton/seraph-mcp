@@ -46,10 +46,8 @@ from . import (
 )
 
 # Optional submodule: make import lazy/optional for environments without it
-try:
-    from . import token_optimization as token_optimization  # type: ignore
-except Exception:
-    token_optimization = None  # type: ignore
+# Note: token_optimization module does not exist yet
+token_optimization = None
 
 
 __all__ = [

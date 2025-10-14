@@ -17,8 +17,8 @@ import time
 from typing import Any
 
 try:
-    import chromadb  # type: ignore[import-untyped]
-    from chromadb.config import Settings  # type: ignore[import-untyped]
+    import chromadb
+    from chromadb.config import Settings
 
     CHROMADB_AVAILABLE = True
 except ImportError:

@@ -244,7 +244,7 @@ async def optimize_tokens(
     if _context_optimizer is None:
         return {"error": "Context optimization is not enabled"}
 
-    obs = get_observability()
+    obs = get_observability()  # type: ignore[unreachable]
     obs.increment("tools.optimize_tokens")
 
     try:
@@ -346,7 +346,7 @@ async def count_tokens(
     if _context_optimizer is None:
         return {"error": "Context optimization is not enabled"}
 
-    obs = get_observability()
+    obs = get_observability()  # type: ignore[unreachable]
     obs.increment("tools.count_tokens")
 
     try:
@@ -431,7 +431,7 @@ async def estimate_cost(
     if _context_optimizer is None:
         return {"error": "Context optimization is not enabled"}
 
-    obs = get_observability()
+    obs = get_observability()  # type: ignore[unreachable]
     obs.increment("tools.estimate_cost")
 
     try:
@@ -537,7 +537,7 @@ async def analyze_token_efficiency(
     if _context_optimizer is None:
         return {"error": "Context optimization is not enabled"}
 
-    obs = get_observability()
+    obs = get_observability()  # type: ignore[unreachable]
     obs.increment("tools.analyze_token_efficiency")
 
     try:
@@ -654,7 +654,7 @@ async def check_budget(estimated_cost: float | None = None) -> dict[str, Any]:
     if _budget_enforcer is None:
         return {"error": "Budget management is not enabled"}
 
-    obs = get_observability()
+    obs = get_observability()  # type: ignore[unreachable]
     obs.increment("tools.check_budget")
 
     try:
@@ -692,7 +692,7 @@ async def get_usage_report(
     if _budget_analytics is None:
         return {"error": "Budget management is not enabled"}
 
-    obs = get_observability()
+    obs = get_observability()  # type: ignore[unreachable]
     obs.increment("tools.get_usage_report")
 
     try:
@@ -727,7 +727,7 @@ async def forecast_spending(days_ahead: int = 7) -> dict[str, Any]:
     if _budget_analytics is None:
         return {"error": "Budget management is not enabled"}
 
-    obs = get_observability()
+    obs = get_observability()  # type: ignore[unreachable]
     obs.increment("tools.forecast_spending")
 
     try:
@@ -771,7 +771,7 @@ async def lookup_semantic_cache(
     if _semantic_cache is None:
         return {"error": "Semantic cache is not enabled"}
 
-    obs = get_observability()
+    obs = get_observability()  # type: ignore[unreachable]
     obs.increment("tools.lookup_semantic_cache")
 
     try:
@@ -815,7 +815,7 @@ async def store_in_semantic_cache(
     if _semantic_cache is None:
         return {"error": "Semantic cache is not enabled"}
 
-    obs = get_observability()
+    obs = get_observability()  # type: ignore[unreachable]
     obs.increment("tools.store_in_semantic_cache")
 
     try:
@@ -857,7 +857,7 @@ async def search_semantic_cache(
     if _semantic_cache is None:
         return {"error": "Semantic cache is not enabled"}
 
-    obs = get_observability()
+    obs = get_observability()  # type: ignore[unreachable]
     obs.increment("tools.search_semantic_cache")
 
     try:
@@ -892,7 +892,7 @@ async def get_semantic_cache_stats() -> dict[str, Any]:
     if _semantic_cache is None:
         return {"error": "Semantic cache is not enabled"}
 
-    obs = get_observability()
+    obs = get_observability()  # type: ignore[unreachable]
     obs.increment("tools.get_semantic_cache_stats")
 
     try:
@@ -922,7 +922,7 @@ async def clear_semantic_cache() -> dict[str, Any]:
     if _semantic_cache is None:
         return {"error": "Semantic cache is not enabled"}
 
-    obs = get_observability()
+    obs = get_observability()  # type: ignore[unreachable]
     obs.increment("tools.clear_semantic_cache")
 
     try:
@@ -967,7 +967,7 @@ async def optimize_context(
     if _context_optimizer is None:
         return {"error": "Context optimization is not enabled"}
 
-    obs = get_observability()
+    obs = get_observability()  # type: ignore[unreachable]
     obs.increment("tools.optimize_context")
 
     try:
@@ -1035,7 +1035,7 @@ async def get_optimization_settings() -> dict[str, Any]:
     if _context_optimizer is None:
         return {"error": "Context optimization is not enabled"}
 
-    obs = get_observability()
+    obs = get_observability()  # type: ignore[unreachable]
     obs.increment("tools.get_optimization_settings")
 
     try:
@@ -1074,7 +1074,7 @@ async def get_optimization_stats() -> dict[str, Any]:
     if _context_optimizer is None:
         return {"error": "Context optimization is not enabled"}
 
-    obs = get_observability()
+    obs = get_observability()  # type: ignore[unreachable]
     obs.increment("tools.get_optimization_stats")
 
     try:
@@ -1129,7 +1129,7 @@ def _init_budget_management_if_available(config: Any) -> None:
             get_budget_tracker,
         )
     except Exception as e:
-        logger.info("Budget management module not available or failed to import: %s", e)
+        logger.info("Budget management module not available: %s", e)
         _budget_tracker = None
         _budget_enforcer = None
         _budget_analytics = None
@@ -1167,7 +1167,7 @@ def _init_semantic_cache_if_available(config: Any) -> None:
         _semantic_cache = None
 
 
-async def initialize_server():
+async def initialize_server() -> None:
     """Initialize server resources on startup."""
 
     global _initialized, _context_optimizer, _budget_tracker, _budget_enforcer, _budget_analytics, _semantic_cache
@@ -1240,7 +1240,7 @@ async def initialize_server():
         raise
 
 
-async def cleanup_server():
+async def cleanup_server() -> None:
     """Cleanup server resources on shutdown."""
     global _initialized, _context_optimizer, _budget_tracker, _budget_enforcer, _budget_analytics, _semantic_cache
 
@@ -1290,14 +1290,19 @@ async def cleanup_server():
 
 # Register lifecycle hooks
 @mcp.lifespan()  # type: ignore[attr-defined]
-async def lifespan():
+async def lifespan():  # type: ignore[no-untyped-def]
     """Server lifespan manager (startup/shutdown)."""
     await initialize_server()
     yield
     await cleanup_server()
 
 
-def main():
+def run_server() -> None:
+    """Run the MCP server."""
+    mcp.run()
+
+
+def main() -> None:
     """CLI entry point for seraph-mcp command."""
     mcp.run()
 
