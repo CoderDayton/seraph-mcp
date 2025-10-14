@@ -241,4 +241,3 @@ fastmcp dev src/server.py
 For issues or questions:
 - Check [GitHub Issues](https://github.com/coderdayton/seraph-mcp/issues)
 - Review [SDD.md](../SDD.md) for architecture details
-- See [TESTING.md](../TESTING.md) for Redis testing guidelines

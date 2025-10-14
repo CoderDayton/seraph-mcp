@@ -13,11 +13,14 @@ import asyncio
 import hashlib
 import logging
 import time
+from collections import deque
 from typing import Any
 
 import tiktoken
 
+from ..providers.models_dev import get_models_dev_client
 from .config import ContextOptimizationConfig
+from .embeddings import create_embedding_service
 from .models import FeedbackRecord, OptimizationResult
 from .seraph_compression import CompressionResult, SeraphCompressor
 
@@ -84,6 +87,9 @@ class ContextOptimizer:
         self.provider: Any | None = provider
         self.budget_tracker: Any | None = budget_tracker
 
+        # Models.dev client for dynamic pricing
+        self._models_dev_client = get_models_dev_client()
+
         # Token counter
         self.encoding: Any
         try:
@@ -94,8 +100,58 @@ class ContextOptimizer:
         # Simple in-memory cache for optimization results
         self.cache: dict[str, OptimizationResult] = {}
 
+        # P0: Cache hit tracking
+        self.cache_hits: int = 0
+        self.cache_misses: int = 0
+
+        # P0: Rolling window for last 100 optimizations (lightweight snapshots)
+        self.rolling_window: deque[dict[str, Any]] = deque(maxlen=100)
+
+        # Initialize embedding service for semantic similarity (if configured)
+        embedding_service = None
+        if config.embedding_provider and config.embedding_provider.lower() != "none":
+            try:
+                # Use provider presence to determine embedding availability
+                if provider is None or getattr(provider, "config", None) is None:
+                    logger.warning("No provider instance available for embeddings. Embeddings disabled.")
+
+                    # Using provider-backed embeddings; credentials come from provider.config
+
+                    if provider is not None and getattr(provider, "config", None) is not None:
+                        try:
+                            embedding_service = create_embedding_service(
+                                provider=getattr(provider, "name", config.embedding_provider),
+                                provider_config=provider.config,
+                                model=(config.embedding_model or "text-embedding-3-small"),
+                                dimensions=config.embedding_dimensions,
+                            )
+
+                            logger.info(
+                                f"Embedding service initialized: provider={getattr(provider, 'name', config.embedding_provider)}, "
+                                f"model={config.embedding_model or 'default'}"
+                            )
+
+                        except Exception as e:
+                            logger.warning(
+                                f"Failed to initialize provider-backed embedding service: {e}. Embeddings disabled."
+                            )
+
+                    else:
+                        logger.warning("No provider instance available for embeddings. Embeddings disabled.")
+
+            except Exception as e:
+                logger.warning(f"Failed to initialize embedding service: {e}. Embeddings disabled.")
+                embedding_service = None
+
         # Seraph compressor for deterministic multi-layer compression
-        self.seraph_compressor = SeraphCompressor(seed=7)
+        # Use config-driven ratios for L1/L2/L3 layers
+        self.seraph_compressor = SeraphCompressor(
+            seed=7,
+            l1_ratio=config.seraph_l1_ratio,
+            l2_ratio=config.seraph_l2_ratio,
+            l3_ratio=config.seraph_l3_ratio,
+            embedding_service=embedding_service,
+        )
         self.seraph_cache: dict[str, dict[str, Any]] = {}  # Cache for seraph compression results
 
         # Learning statistics
@@ -139,8 +195,12 @@ class ContextOptimizer:
         content_hash = self._hash_content(content)
         if content_hash in self.cache:
             cached = self.cache[content_hash]
-            # Update cache hit stats
+            # P0: Track cache hit
+            self.cache_hits += 1
             return cached
+
+        # P0: Track cache miss
+        self.cache_misses += 1
 
         # Count original tokens
         tokens_before = self._count_tokens(content)
@@ -190,12 +250,15 @@ class ContextOptimizer:
                 rollback_occurred = True
 
             # Calculate time
-            optimization_time_ms = (time.perf_counter() - start_time) * 1000
+            processing_time_ms = (time.perf_counter() - start_time) * 1000
 
             # Calculate cost savings
             cost_savings_usd = await self._calculate_cost_savings(
                 tokens_saved, getattr(self.provider, "model_name", None)
             )
+
+            # Calculate compression ratio (original/compressed, minimum 1.0)
+            compression_ratio = tokens_before / tokens_after if tokens_after > 0 else 1.0
 
             # Create result
             result = OptimizationResult(
@@ -205,13 +268,16 @@ class ContextOptimizer:
                 tokens_after=tokens_after,
                 tokens_saved=tokens_saved,
                 reduction_percentage=reduction_percentage,
+                compression_ratio=compression_ratio,
                 quality_score=quality_score,
                 validation_passed=validation_passed,
+                processing_time_ms=processing_time_ms,
                 method=method,
-                optimization_time_ms=optimization_time_ms,
-                cost_savings_usd=cost_savings_usd,
-                model_name=getattr(self.provider, "model_name", None),
-                rollback_occurred=rollback_occurred,
+                metadata={
+                    "cost_savings_usd": cost_savings_usd,
+                    "model_name": getattr(self.provider, "model_name", None),
+                    "rollback_occurred": rollback_occurred,
+                },
             )
 
             # Track cost savings in budget if available
@@ -228,6 +294,9 @@ class ContextOptimizer:
             # Update stats
             self._update_stats(result)
 
+            # P0: Add to rolling window (lightweight snapshot)
+            self._add_to_rolling_window(result)
+
             # Store feedback for learning (async, don't wait)
             asyncio.create_task(self._store_feedback(result))
 
@@ -235,7 +304,7 @@ class ContextOptimizer:
 
         except TimeoutError:
             # Timeout - return original content
-            optimization_time_ms = (time.perf_counter() - start_time) * 1000
+            processing_time_ms = (time.perf_counter() - start_time) * 1000
             return OptimizationResult(
                 original_content=content,
                 optimized_content=content,
@@ -243,17 +312,18 @@ class ContextOptimizer:
                 tokens_after=tokens_before,
                 tokens_saved=0,
                 reduction_percentage=0.0,
+                compression_ratio=1.0,
                 quality_score=1.0,  # No change = perfect preservation
                 validation_passed=True,
-                optimization_time_ms=optimization_time_ms,
-                rollback_occurred=True,
+                processing_time_ms=processing_time_ms,
+                method="none",
+                metadata={"rollback_occurred": True, "error": "timeout"},
             )
 
         except Exception as e:
             # Error - return original content
-            optimization_time_ms = (time.perf_counter() - start_time) * 1000
             print(f"Optimization error: {e}")
-            return self._create_passthrough_result(content, start_time)
+            return self._create_passthrough_result(content, start_time, error=str(e))
 
     async def _optimize_with_ai(self, content: str) -> tuple[str, float]:
         """
@@ -346,6 +416,8 @@ class ContextOptimizer:
         Returns L3 layer (largest compressed layer) which typically achieves
         20-40% reduction while preserving factual content.
 
+        Uses config-driven compression ratios for L1/L2/L3 layers.
+
         Returns:
             Tuple of (optimized_content, quality_score)
         """
@@ -356,8 +428,9 @@ class ContextOptimizer:
             return cached["l3"], cached["quality"]
 
         try:
-            # Build compression layers
-            result: CompressionResult = self.seraph_compressor.build(content)
+            # Build compression layers with config-driven ratios
+            # SeraphCompressor was initialized with config.seraph_l1/l2/l3_ratio
+            result: CompressionResult = await self.seraph_compressor.build(content)
 
             # Use L3 (largest layer) as the optimized output
             # L3 typically preserves ~60-80% of tokens with high quality
@@ -407,7 +480,7 @@ class ContextOptimizer:
         """
         try:
             # Step 1: Seraph pre-compression to L2 (more aggressive than L3)
-            result: CompressionResult = self.seraph_compressor.build(content)
+            result: CompressionResult = await self.seraph_compressor.build(content)
 
             # Use L2 for hybrid (more compressed, leaves room for AI polish)
             seraph_compressed = result.l2
@@ -447,10 +520,11 @@ class ContextOptimizer:
         try:
             # Use provider's generate method (adjust based on actual provider interface)
             if hasattr(self.provider, "generate"):
+                # Low temperature for consistent, deterministic compression
                 response: Any = await self.provider.generate(
                     prompt=prompt,
                     max_tokens=max_tokens,
-                    temperature=0.3,  # Low temperature for consistent compression
+                    temperature=0.3,
                 )
                 return str(response.get("content", "") or response.get("text", ""))
             else:
@@ -478,10 +552,16 @@ class ContextOptimizer:
         """Generate hash for content"""
         return hashlib.sha256(content.encode("utf-8")).hexdigest()
 
-    def _create_passthrough_result(self, content: str, start_time: float) -> OptimizationResult:
+    def _create_passthrough_result(
+        self, content: str, start_time: float, error: str | None = None
+    ) -> OptimizationResult:
         """Create result for content that wasn't optimized"""
         tokens = self._count_tokens(content)
-        optimization_time_ms = (time.perf_counter() - start_time) * 1000
+        processing_time_ms = (time.perf_counter() - start_time) * 1000
+
+        metadata = {}
+        if error:
+            metadata["error"] = error
 
         return OptimizationResult(
             original_content=content,
@@ -490,10 +570,12 @@ class ContextOptimizer:
             tokens_after=tokens,
             tokens_saved=0,
             reduction_percentage=0.0,
+            compression_ratio=1.0,
             quality_score=1.0,
             validation_passed=True,
-            optimization_time_ms=optimization_time_ms,
-            rollback_occurred=False,
+            processing_time_ms=processing_time_ms,
+            method="none",
+            metadata=metadata,
         )
 
     def _update_stats(self, result: OptimizationResult) -> None:
@@ -509,7 +591,7 @@ class ContextOptimizer:
         if isinstance(method_usage, dict) and method in method_usage:
             method_usage[method] += 1
 
-        if result.validation_passed and not result.rollback_occurred:
+        if result.validation_passed and not result.metadata.get("rollback_occurred", False):
             successful_opts = self.stats["successful_optimizations"]
             if not isinstance(successful_opts, int):
                 raise TypeError(f"successful_optimizations must be int, got {type(successful_opts)}")
@@ -538,19 +620,17 @@ class ContextOptimizer:
     async def _store_feedback(self, result: OptimizationResult) -> None:
         """Store feedback for adaptive learning (async)"""
         try:
-            # Calculate success score
-            success_score = result.quality_score if result.validation_passed else 0.0
+            # Calculate user rating (success score based on quality and validation)
+            user_rating = result.quality_score if result.validation_passed else 0.0
 
             # Record feedback for future improvements
             _feedback = FeedbackRecord(
-                record_id=f"opt_{int(time.time() * 1000)}",
                 content_hash=self._hash_content(result.original_content),
+                method=result.method,
                 tokens_saved=result.tokens_saved,
-                reduction_percentage=result.reduction_percentage,
                 quality_score=result.quality_score,
-                validation_passed=result.validation_passed,
-                optimization_time_ms=result.optimization_time_ms,
-                success_score=success_score,
+                user_rating=user_rating,
+                timestamp=result.timestamp.timestamp(),
             )
 
             # TODO: Store in database for long-term learning
@@ -560,7 +640,19 @@ class ContextOptimizer:
             print(f"Feedback storage error: {e}")
 
     def get_stats(self) -> dict[str, Any]:
-        """Get current optimization statistics"""
+        """
+        Get current optimization statistics.
+
+        P0 Enhancement: Includes rolling window aggregates, cache hit rate, and percentiles.
+
+        Returns:
+            Comprehensive statistics dictionary with:
+            - Lifetime stats: total_optimizations, success_rate, avg_quality, avg_reduction, tokens_saved
+            - Rolling window (last 100): aggregates for recent performance
+            - Cache metrics: size, hit_rate, seraph_cache_size
+            - Method breakdown: ai, seraph, hybrid usage counts
+            - Percentiles: p50, p95, p99 processing times
+        """
         total_opts = self.stats["total_optimizations"]
         successful_opts = self.stats["successful_optimizations"]
         if not isinstance(total_opts, int | float):
@@ -570,10 +662,119 @@ class ContextOptimizer:
 
         success_rate = successful_opts / total_opts if total_opts > 0 else 0.0
 
+        # P0: Calculate cache hit rate
+        total_cache_requests = self.cache_hits + self.cache_misses
+        cache_hit_rate = self.cache_hits / total_cache_requests if total_cache_requests > 0 else 0.0
+
+        # P0: Calculate rolling window aggregates (last 100 optimizations)
+        rolling_stats = self._calculate_rolling_window_stats()
+
+        # P0: Calculate percentiles from rolling window
+        percentiles = self._calculate_percentiles()
+
         return {
+            # Lifetime statistics
             **self.stats,
             "success_rate": success_rate,
+            # Cache metrics
             "cache_size": len(self.cache),
+            "cache_hits": self.cache_hits,
+            "cache_misses": self.cache_misses,
+            "cache_hit_rate": cache_hit_rate,
+            "seraph_cache_size": len(self.seraph_cache),
+            # Rolling window aggregates (last 100 optimizations)
+            "rolling_window": rolling_stats,
+            # Percentiles
+            "percentiles": percentiles,
+        }
+
+    def _add_to_rolling_window(self, result: OptimizationResult) -> None:
+        """
+        Add optimization result to rolling window (lightweight snapshot).
+
+        Args:
+            result: OptimizationResult to snapshot
+        """
+        snapshot = {
+            "tokens_saved": result.tokens_saved,
+            "quality_score": result.quality_score,
+            "method": result.method,
+            "processing_time_ms": result.processing_time_ms,
+            "rollback_occurred": result.metadata.get("rollback_occurred", False),
+            "validation_passed": result.validation_passed,
+        }
+        self.rolling_window.append(snapshot)
+
+    def _calculate_rolling_window_stats(self) -> dict[str, Any]:
+        """
+        Calculate aggregates from rolling window (last 100 optimizations).
+
+        Returns:
+            Dictionary with rolling window statistics
+        """
+        if not self.rolling_window:
+            return {
+                "count": 0,
+                "avg_quality": 0.0,
+                "avg_reduction_pct": 0.0,
+                "success_rate": 0.0,
+                "avg_processing_ms": 0.0,
+            }
+
+        successful = [s for s in self.rolling_window if s["validation_passed"] and not s["rollback_occurred"]]
+
+        count = len(self.rolling_window)
+        success_count = len(successful)
+        success_rate = success_count / count if count > 0 else 0.0
+
+        # Calculate averages from successful optimizations only
+        if successful:
+            avg_quality = sum(s["quality_score"] for s in successful) / len(successful)
+            # Reduction percentage calculated from tokens_saved (assuming original was larger)
+            # This is approximate since we only store tokens_saved, not original count
+            avg_tokens_saved = sum(s["tokens_saved"] for s in successful) / len(successful)
+        else:
+            avg_quality = 0.0
+            avg_tokens_saved = 0.0
+
+        # Processing time includes all attempts
+        avg_processing_ms = sum(s["processing_time_ms"] for s in self.rolling_window) / count
+
+        return {
+            "count": count,
+            "avg_quality": avg_quality,
+            "avg_tokens_saved": avg_tokens_saved,
+            "success_rate": success_rate,
+            "avg_processing_ms": avg_processing_ms,
+        }
+
+    def _calculate_percentiles(self) -> dict[str, float]:
+        """
+        Calculate percentiles (p50, p95, p99) from rolling window processing times.
+
+        Returns:
+            Dictionary with percentile values in milliseconds
+        """
+        if not self.rolling_window:
+            return {
+                "p50_ms": 0.0,
+                "p95_ms": 0.0,
+                "p99_ms": 0.0,
+            }
+
+        # Extract processing times and sort
+        times = sorted([s["processing_time_ms"] for s in self.rolling_window])
+        n = len(times)
+
+        # Calculate percentile indices
+        p50_idx = int(n * 0.50)
+        p95_idx = int(n * 0.95)
+        p99_idx = int(n * 0.99)
+
+        return {
+            "p50_ms": times[p50_idx] if p50_idx < n else times[-1],
+            "p95_ms": times[p95_idx] if p95_idx < n else times[-1],
+            "p99_ms": times[p99_idx] if p99_idx < n else times[-1],
         }
 
     def clear_cache(self) -> None:
@@ -583,7 +784,9 @@ class ContextOptimizer:
 
     async def _calculate_cost_savings(self, tokens_saved: int, model_name: str | None) -> float:
         """
-        Calculate cost savings from token reduction.
+        Calculate cost savings from token reduction using Models.dev API.
+
+        Prioritizes dynamic pricing from Models.dev API with fallback to static pricing.
 
         Args:
             tokens_saved: Number of tokens saved
@@ -595,24 +798,48 @@ class ContextOptimizer:
         if tokens_saved <= 0 or not model_name:
             return 0.0
 
-        # Simple pricing lookup (can be enhanced with models.dev integration)
-        # Average input token prices for common models (per 1M tokens)
-        pricing = {
-            "gpt-4": 30.0,
-            "gpt-4-turbo": 10.0,
-            "gpt-3.5-turbo": 0.50,
-            "claude-3-opus": 15.0,
-            "claude-3-sonnet": 3.0,
-            "claude-3-haiku": 0.25,
-            "gemini-pro": 0.50,
-        }
+        price_per_million = None
 
-        # Find best matching price
-        price_per_million = 1.0  # Default fallback
-        for model_key, price in pricing.items():
-            if model_key in model_name.lower():
-                price_per_million = price
-                break
+        # Try Models.dev API for dynamic pricing
+        try:
+            result = await self._models_dev_client.search_model(model_name)
+            if result:
+                _provider_id, model_info = result
+                if model_info.cost:
+                    price_per_million = model_info.cost.input
+                    logger.debug(f"Using Models.dev pricing for {model_name}: ${price_per_million}/1M tokens")
+        except Exception as e:
+            logger.debug(f"Models.dev lookup failed for {model_name}: {e}")
+
+        # Fallback to static pricing if Models.dev unavailable
+        if price_per_million is None:
+            # Fallback pricing (per 1M input tokens)
+            # These are conservative estimates as of 2024
+            fallback_pricing = {
+                "gpt-4": 30.0,
+                "gpt-4-turbo": 10.0,
+                "gpt-3.5-turbo": 0.50,
+                "claude-3-opus": 15.0,
+                "claude-3-sonnet": 3.0,
+                "claude-3-haiku": 0.25,
+                "claude-3.5-sonnet": 3.0,
+                "gemini-pro": 0.50,
+                "gemini-1.5-pro": 1.25,
+                "gemini-1.5-flash": 0.075,
+            }
+
+            # Find best matching price
+            model_lower = model_name.lower()
+            for model_key, price in fallback_pricing.items():
+                if model_key in model_lower:
+                    price_per_million = price
+                    logger.debug(f"Using fallback pricing for {model_name}: ${price_per_million}/1M tokens")
+                    break
+
+            # Ultimate fallback
+            if price_per_million is None:
+                price_per_million = 1.0
+                logger.debug(f"Using default fallback pricing for {model_name}: ${price_per_million}/1M tokens")
 
         # Calculate savings: (tokens_saved / 1_000_000) * price_per_million
         cost_savings = (tokens_saved / 1_000_000) * price_per_million
@@ -626,10 +853,12 @@ class ContextOptimizer:
         try:
             # Record savings directly on budget tracker
             if hasattr(self.budget_tracker, "record_savings"):
+                cost_savings_usd = result.metadata.get("cost_savings_usd", 0.0)
+                model_name = result.metadata.get("model_name", "unknown")
                 await self.budget_tracker.record_savings(
-                    amount=result.cost_savings_usd,
+                    amount=cost_savings_usd,
                     transaction_type="optimization_savings",
-                    model=result.model_name or "unknown",
+                    model=model_name,
                     tokens=result.tokens_saved,
                     metadata={
                         "reduction_percentage": result.reduction_percentage,

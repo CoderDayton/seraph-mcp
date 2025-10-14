@@ -361,7 +361,7 @@ print(f"Cost saved: ${result.cost_savings_usd:.4f}")
 
 **"Seraph compression errors"**
 - Optional dependencies may be missing: `pip install tiktoken blake3`
-- For full features: `pip install sentence-transformers llmlingua`
+- For full features: `pip install llmlingua`
 - Basic functionality works without optional deps
 
 ## License

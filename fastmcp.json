@@ -21,7 +21,6 @@
             "google-genai>=0.2.0",
             "tiktoken>=0.5.0",
             "llmlingua>=0.2.2",
-            "langchain>=0.3.27",
             "blake3>=1.0.7"
         ],
         "editable": ["."]

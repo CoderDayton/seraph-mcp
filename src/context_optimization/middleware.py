@@ -147,10 +147,12 @@ class OptimizedProvider:
             result = await self.optimizer.optimize(prompt)
 
             # Update middleware stats
-            if result.validation_passed and not result.rollback_occurred:
+            rollback_occurred = result.metadata.get("rollback_occurred", False)
+            if result.validation_passed and not rollback_occurred:
                 self.middleware_stats["optimized_calls"] += 1
                 self.middleware_stats["total_tokens_saved"] += result.tokens_saved
-                self.middleware_stats["total_cost_saved"] += result.cost_savings_usd
+                cost_savings = result.metadata.get("cost_savings_usd", 0.0)
+                self.middleware_stats["total_cost_saved"] += cost_savings
 
                 logger.info(
                     f"Optimized prompt: {result.tokens_saved} tokens saved "
@@ -202,10 +204,12 @@ class OptimizedProvider:
             }
 
             # Update middleware stats
-            if result.validation_passed and not result.rollback_occurred:
+            rollback_occurred = result.metadata.get("rollback_occurred", False)
+            if result.validation_passed and not rollback_occurred:
                 self.middleware_stats["optimized_calls"] += 1
                 self.middleware_stats["total_tokens_saved"] += result.tokens_saved
-                self.middleware_stats["total_cost_saved"] += result.cost_savings_usd
+                cost_savings = result.metadata.get("cost_savings_usd", 0.0)
+                self.middleware_stats["total_cost_saved"] += cost_savings
 
                 logger.info(
                     f"Optimized message: {result.tokens_saved} tokens saved "
@@ -250,8 +254,8 @@ class OptimizedProvider:
                         "tokens_saved": optimization_result.tokens_saved,
                         "reduction_percentage": optimization_result.reduction_percentage,
                         "quality_score": optimization_result.quality_score,
-                        "cost_savings_usd": optimization_result.cost_savings_usd,
-                        "optimization_time_ms": optimization_result.optimization_time_ms,
+                        "cost_savings_usd": optimization_result.metadata.get("cost_savings_usd", 0.0),
+                        "processing_time_ms": optimization_result.processing_time_ms,
                     }
 
             result: dict[str, Any] = response

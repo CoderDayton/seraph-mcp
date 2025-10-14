@@ -62,6 +62,29 @@ class ContextOptimizationConfig(BaseModel):
         description="L3 layer ratio (larger factual extracts)",
     )
 
+    # Embedding configuration for semantic similarity
+    embedding_provider: str = Field(
+        default="gemini",
+        description="Embedding provider: 'openai', 'gemini', or 'none' (disables embeddings)",
+    )
+
+    embedding_model: str | None = Field(
+        default=None,
+        description="Embedding model name (provider-specific default if None)",
+    )
+
+    embedding_api_key: str | None = Field(
+        default=None,
+        description="API key for embedding provider (uses provider's key if None)",
+    )
+
+    embedding_dimensions: int | None = Field(
+        default=None,
+        ge=256,
+        le=3072,
+        description="Optional dimension reduction for embeddings",
+    )
+
     model_config = ConfigDict(frozen=False)
 
 
@@ -83,6 +106,10 @@ def load_config() -> ContextOptimizationConfig:
         CONTEXT_OPTIMIZATION_SERAPH_L1_RATIO: L1 ratio (default: 0.002)
         CONTEXT_OPTIMIZATION_SERAPH_L2_RATIO: L2 ratio (default: 0.01)
         CONTEXT_OPTIMIZATION_SERAPH_L3_RATIO: L3 ratio (default: 0.05)
+        CONTEXT_OPTIMIZATION_EMBEDDING_PROVIDER: Provider (default: gemini)
+        CONTEXT_OPTIMIZATION_EMBEDDING_MODEL: Model name (optional)
+        CONTEXT_OPTIMIZATION_EMBEDDING_API_KEY: API key (optional)
+        CONTEXT_OPTIMIZATION_EMBEDDING_DIMENSIONS: Dimensions (optional)
     """
     # Auto-detect compression method based on provider availability
     # If no provider configured, default to 'seraph' (works without AI)
@@ -98,4 +125,8 @@ def load_config() -> ContextOptimizationConfig:
         seraph_l1_ratio=float(os.getenv("CONTEXT_OPTIMIZATION_SERAPH_L1_RATIO", "0.002")),
         seraph_l2_ratio=float(os.getenv("CONTEXT_OPTIMIZATION_SERAPH_L2_RATIO", "0.01")),
         seraph_l3_ratio=float(os.getenv("CONTEXT_OPTIMIZATION_SERAPH_L3_RATIO", "0.05")),
+        embedding_provider=os.getenv("CONTEXT_OPTIMIZATION_EMBEDDING_PROVIDER", "gemini"),
+        embedding_model=os.getenv("CONTEXT_OPTIMIZATION_EMBEDDING_MODEL"),
+        embedding_api_key=os.getenv("CONTEXT_OPTIMIZATION_EMBEDDING_API_KEY"),
+        embedding_dimensions=int(os.getenv("CONTEXT_OPTIMIZATION_EMBEDDING_DIMENSIONS", 768)),
     )

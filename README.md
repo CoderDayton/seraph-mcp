@@ -179,8 +179,7 @@ Hybrid compression with automatic method selection:
 - `cache_clear()` — Clear entire cache
 - `get_metrics()` — Observability metrics snapshot
 
-### Token & Context Optimization (5 tools)
-- `optimize_tokens()` — Multi-strategy token reduction
+### Context Optimization (4 tools)
 - `count_tokens()` — Accurate token counting per model
 - `estimate_cost()` — LLM API cost prediction
 - `analyze_token_efficiency()` — Optimization opportunity analysis
@@ -295,7 +294,6 @@ docker-compose -f docker/docker-compose.yml down
 
 - **[System Design](docs/SDD.md)** — Architecture and design decisions
 - **[Context Optimization](src/context_optimization/README.md)** — Compression system details
-- **[Provider Guide](docs/PROVIDERS.md)** — Provider integration reference
 
 ---
 

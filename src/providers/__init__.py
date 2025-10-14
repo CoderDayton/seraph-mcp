@@ -77,6 +77,7 @@ from .models_dev import (
 )
 from .openai_compatible import OpenAICompatibleProvider
 from .openai_provider import OpenAIProvider
+from .resilient_provider import ResilientProvider, wrap_provider_with_resilience
 
 __all__ = [
     # Base classes and models
@@ -102,4 +103,7 @@ __all__ = [
     "ModelsDevClient",
     "get_models_dev_client",
     "close_models_dev_client",
+    # Resilience wrapper (P0 Phase 1c)
+    "ResilientProvider",
+    "wrap_provider_with_resilience",
 ]

@@ -226,9 +226,9 @@ class TestSeraphCompressor:
         assert hasattr(compressor, "t2")
         assert hasattr(compressor, "t3")
 
-    def test_build_short_text(self, compressor: SeraphCompressor, short_text: str) -> None:
+    async def test_build_short_text(self, compressor: SeraphCompressor, short_text: str) -> None:
         """Test building compression layers from short text."""
-        result = compressor.build(short_text)
+        result = await compressor.build(short_text)
 
         assert isinstance(result, CompressionResult)
         assert result.l1 is not None
@@ -241,9 +241,9 @@ class TestSeraphCompressor:
         assert len(result.l2) > 0
         assert len(result.l3) > 0
 
-    def test_build_long_text(self, compressor: SeraphCompressor, long_text: str) -> None:
+    async def test_build_long_text(self, compressor: SeraphCompressor, long_text: str) -> None:
         """Test building compression layers from long text."""
-        result = compressor.build(long_text)
+        result = await compressor.build(long_text)
 
         assert isinstance(result, CompressionResult)
 
@@ -269,19 +269,19 @@ class TestSeraphCompressor:
         original_tokens = count_tokens(long_text)
         assert l3_tokens < original_tokens
 
-    def test_build_deterministic(self, compressor: SeraphCompressor, short_text: str) -> None:
+    async def test_build_deterministic(self, compressor: SeraphCompressor, short_text: str) -> None:
         """Test that build produces deterministic results."""
-        result1 = compressor.build(short_text)
-        result2 = compressor.build(short_text)
+        result1 = await compressor.build(short_text)
+        result2 = await compressor.build(short_text)
 
         # Same input should produce same output
         assert result1.l1 == result2.l1
         assert result1.l2 == result2.l2
         assert result1.l3 == result2.l3
 
-    def test_build_empty_text(self, compressor: SeraphCompressor) -> None:
+    async def test_build_empty_text(self, compressor: SeraphCompressor) -> None:
         """Test building layers from empty text."""
-        result = compressor.build("")
+        result = await compressor.build("")
 
         assert isinstance(result, CompressionResult)
         # Empty text should produce empty or minimal layers
@@ -289,9 +289,9 @@ class TestSeraphCompressor:
         assert len(result.l2) >= 0
         assert len(result.l3) >= 0
 
-    def test_build_whitespace_only(self, compressor: SeraphCompressor) -> None:
+    async def test_build_whitespace_only(self, compressor: SeraphCompressor) -> None:
         """Test building layers from whitespace-only text."""
-        result = compressor.build("   \n\n   \t\t  ")
+        result = await compressor.build("   \n\n   \t\t  ")
 
         assert isinstance(result, CompressionResult)
         # Should handle gracefully
@@ -299,21 +299,21 @@ class TestSeraphCompressor:
         assert result.l2 is not None
         assert result.l3 is not None
 
-    def test_build_unicode_text(self, compressor: SeraphCompressor) -> None:
+    async def test_build_unicode_text(self, compressor: SeraphCompressor) -> None:
         """Test building layers from Unicode text."""
         unicode_text = """
         人工智能正在改变世界。Machine learning and deep learning are key technologies.
         自然语言处理 (NLP) enables computers to understand human language.
         The future of AI is 令人兴奋的 and full of possibilities.
         """
-        result = compressor.build(unicode_text)
+        result = await compressor.build(unicode_text)
 
         assert isinstance(result, CompressionResult)
         assert len(result.l1) > 0
         assert len(result.l2) > 0
         assert len(result.l3) > 0
 
-    def test_build_code_blocks(self, compressor: SeraphCompressor) -> None:
+    async def test_build_code_blocks(self, compressor: SeraphCompressor) -> None:
         """Test building layers from text with code blocks."""
         code_text = """
         Python is a popular programming language for machine learning.
@@ -328,29 +328,29 @@ class TestSeraphCompressor:
         The code above shows a simple training function.
         Libraries like scikit-learn, TensorFlow, and PyTorch are commonly used.
         """
-        result = compressor.build(code_text)
+        result = await compressor.build(code_text)
 
         assert isinstance(result, CompressionResult)
         # Should preserve some information about the code
         assert len(result.l3) > 0
 
-    def test_build_special_characters(self, compressor: SeraphCompressor) -> None:
+    async def test_build_special_characters(self, compressor: SeraphCompressor) -> None:
         """Test building layers with special characters."""
         special_text = """
         AI systems can process various formats: JSON, XML, CSV, etc.
         Mathematical symbols like ∑, ∫, π are common in ML papers.
         Special characters: @#$%^&*()_+-=[]{}|;:'",.<>?/~`
         """
-        result = compressor.build(special_text)
+        result = await compressor.build(special_text)
 
         assert isinstance(result, CompressionResult)
         assert result.l1 is not None
         assert result.l2 is not None
         assert result.l3 is not None
 
-    def test_query_basic(self, compressor: SeraphCompressor, long_text: str) -> None:
+    async def test_query_basic(self, compressor: SeraphCompressor, long_text: str) -> None:
         """Test basic query functionality."""
-        result = compressor.build(long_text)
+        result = await compressor.build(long_text)
 
         question = "What is machine learning?"
         top_k = compressor.query(result, question, k=5)
@@ -364,9 +364,9 @@ class TestSeraphCompressor:
             assert isinstance(text, str)
             assert len(text) > 0
 
-    def test_query_relevance(self, compressor: SeraphCompressor, long_text: str) -> None:
-        """Test that query returns relevant results."""
-        result = compressor.build(long_text)
+    async def test_query_relevance(self, compressor: SeraphCompressor, long_text: str) -> None:
+        """Test that query returns relevant chunks."""
+        result = await compressor.build(long_text)
 
         question = "deep learning neural networks"
         top_k = compressor.query(result, question, k=3)
@@ -378,9 +378,9 @@ class TestSeraphCompressor:
         scores = [score for score, _ in top_k]
         assert scores == sorted(scores, reverse=True)
 
-    def test_query_different_k_values(self, compressor: SeraphCompressor, long_text: str) -> None:
+    async def test_query_different_k_values(self, compressor: SeraphCompressor, long_text: str) -> None:
         """Test query with different k values."""
-        result = compressor.build(long_text)
+        result = await compressor.build(long_text)
         question = "artificial intelligence"
 
         top_3 = compressor.query(result, question, k=3)
@@ -395,17 +395,17 @@ class TestSeraphCompressor:
         if len(top_3) > 0 and len(top_5) >= 3:
             assert top_3[0] == top_5[0]
 
-    def test_query_empty_question(self, compressor: SeraphCompressor, short_text: str) -> None:
+    async def test_query_empty_question(self, compressor: SeraphCompressor, short_text: str) -> None:
         """Test query with empty question."""
-        result = compressor.build(short_text)
+        result = await compressor.build(short_text)
         top_k = compressor.query(result, "", k=5)
 
         # Should handle gracefully
         assert isinstance(top_k, list)
 
-    def test_pack_and_load(self, compressor: SeraphCompressor, short_text: str) -> None:
-        """Test packing and loading compression result."""
-        result = compressor.build(short_text)
+    async def test_pack_and_load(self, compressor: SeraphCompressor, short_text: str) -> None:
+        """Test packing and loading compression results."""
+        result = await compressor.build(short_text)
 
         # Pack to temporary file
         with tempfile.NamedTemporaryFile(mode="w", suffix=".json.gz", delete=False) as f:
@@ -445,9 +445,9 @@ class TestSeraphCompressor:
             if Path(temp_path).exists():
                 Path(temp_path).unlink()
 
-    def test_pack_creates_valid_json(self, compressor: SeraphCompressor, short_text: str) -> None:
+    async def test_pack_creates_valid_json(self, compressor: SeraphCompressor, short_text: str) -> None:
         """Test that pack creates valid JSON."""
-        result = compressor.build(short_text)
+        result = await compressor.build(short_text)
 
         with tempfile.NamedTemporaryFile(mode="w", suffix=".json.gz", delete=False) as f:
             temp_path = f.name
@@ -466,9 +466,9 @@ class TestSeraphCompressor:
             if Path(temp_path).exists():
                 Path(temp_path).unlink()
 
-    def test_compression_preserves_key_information(self, compressor: SeraphCompressor, long_text: str) -> None:
+    async def test_compression_preserves_key_information(self, compressor: SeraphCompressor, long_text: str) -> None:
         """Test that compression preserves key information."""
-        result = compressor.build(long_text)
+        result = await compressor.build(long_text)
 
         # Check that key terms are preserved in at least one layer
         key_terms = ["machine learning", "deep learning", "artificial intelligence"]
@@ -479,9 +479,9 @@ class TestSeraphCompressor:
         preserved_count = sum(1 for term in key_terms if term in combined_layers)
         assert preserved_count > 0
 
-    def test_manifest_contains_metadata(self, compressor: SeraphCompressor, long_text: str) -> None:
+    async def test_manifest_contains_metadata(self, compressor: SeraphCompressor, short_text: str) -> None:
         """Test that manifest contains expected metadata."""
-        result = compressor.build(long_text)
+        result = await compressor.build(short_text)
 
         # Check tier1 metadata
         assert "tier1" in result.manifest
@@ -504,13 +504,13 @@ class TestSeraphCompressor:
         tier3 = result.manifest["tier3"]
         assert "method" in tier3
 
-    def test_different_seeds_produce_different_results(self, short_text: str) -> None:
-        """Test that different seeds can produce different results."""
+    async def test_different_seeds_produce_different_results(self, short_text: str) -> None:
+        """Test that different seeds produce different results."""
         compressor1 = SeraphCompressor(seed=42)
-        compressor2 = SeraphCompressor(seed=123)
+        compressor2 = SeraphCompressor(seed=99)
 
-        result1 = compressor1.build(short_text)
-        result2 = compressor2.build(short_text)
+        result1 = await compressor1.build(short_text)
+        result2 = await compressor2.build(short_text)
 
         # Different seeds may produce different results due to randomization
         # But both should be valid CompressionResults
@@ -519,7 +519,7 @@ class TestSeraphCompressor:
         assert result1.l1 is not None
         assert result2.l1 is not None
 
-    def test_very_long_text(self, compressor: SeraphCompressor) -> None:
+    async def test_very_long_text(self, compressor: SeraphCompressor) -> None:
         """Test compression of very long text."""
         # Generate a long document
         very_long_text = "\n\n".join(
@@ -532,7 +532,7 @@ class TestSeraphCompressor:
             ]
         )
 
-        result = compressor.build(very_long_text)
+        result = await compressor.build(very_long_text)
 
         assert isinstance(result, CompressionResult)
 
@@ -543,18 +543,18 @@ class TestSeraphCompressor:
         assert l3_tokens < original_tokens
         assert l3_tokens > 0
 
-    def test_query_on_empty_result(self, compressor: SeraphCompressor) -> None:
-        """Test querying on an empty compression result."""
-        result = compressor.build("")
+    async def test_query_on_empty_result(self, compressor: SeraphCompressor) -> None:
+        """Test querying on empty compression result."""
+        result = await compressor.build("")
 
         top_k = compressor.query(result, "test question", k=5)
 
         # Should handle gracefully
         assert isinstance(top_k, list)
 
-    def test_layers_progressively_compress(self, compressor: SeraphCompressor, long_text: str) -> None:
+    async def test_layers_progressively_compress(self, compressor: SeraphCompressor, long_text: str) -> None:
         """Test that layers provide progressive compression levels."""
-        result = compressor.build(long_text)
+        result = await compressor.build(long_text)
 
         l1_tokens = count_tokens(result.l1)
         l2_tokens = count_tokens(result.l2)

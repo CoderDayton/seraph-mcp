@@ -32,6 +32,7 @@ dependencies = [
     "httpx>=0.25.0", # HTTP client for Models.dev API
     # Cache and storage
     "redis>=5.0.0", # Redis backend for caching
+    "cachetools>=5.3.0", # In-memory caching utilities (LRU, FIFO, TTL)
     # AI Model Providers (all included)
     "openai>=1.0.0", # OpenAI GPT models
     "anthropic>=0.25.0", # Anthropic Claude models
@@ -39,14 +40,14 @@ dependencies = [
     # Token optimization
     "tiktoken>=0.5.0", # OpenAI token counting
     "llmlingua>=0.2.2",
-    "langchain>=0.3.27",
     "blake3>=1.0.7",
+    # Resilience patterns
+    "pybreaker>=1.0.0", # Circuit breaker pattern
 ]
 
 [project.optional-dependencies]
 # Semantic cache dependencies (optional - needed for semantic caching feature)
 semantic_cache = [
-    "sentence-transformers>=2.0.0",  # Local embedding models
     "chromadb>=0.4.0",               # Vector database for similarity search
 ]
 
@@ -59,6 +60,7 @@ dev = [
     "ruff>=0.1.0",
     "mypy>=1.8.0",
     "types-redis>=4.6.0",
+    "types-cachetools>=5.3.0",
     "bandit[toml]>=1.7.0",
     "safety>=3.0.0",
     "pre-commit>=3.5.0",
@@ -68,7 +70,6 @@ dev = [
 
 # All optional features (for convenience)
 all = [
-    "sentence-transformers>=2.0.0",  # Semantic cache
     "chromadb>=0.4.0",               # Semantic cache
 ]
 
@@ -118,6 +119,32 @@ warn_unreachable = false
 [[tool.mypy.overrides]]
 module = "src.providers.gemini_provider"
 warn_unreachable = false
+
+[[tool.mypy.overrides]]
+module = "llmlingua"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "cachetools"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "chromadb"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "chromadb.config"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "src.semantic_cache.*"
+follow_imports = "skip"
+
+[[tool.mypy.overrides]]
+module = "src.context_optimization.seraph_compression"
+follow_imports = "skip"
+
+
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
@@ -176,7 +203,7 @@ exclude_lines = [
 
 [tool.bandit]
 exclude_dirs = ["tests", "venv", ".venv", "env"]
-skips = ["B101", "B601"]
+skips = ["B101", "B601", "B311"]  # B311: random is safe for retry jitter (non-cryptographic)
 
 [tool.basedpyright]
 typeCheckingMode = "strict"

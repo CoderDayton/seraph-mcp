@@ -54,6 +54,7 @@ Usage:
 from .cache import SemanticCache, close_semantic_cache, get_semantic_cache
 from .config import SemanticCacheConfig
 from .embeddings import EmbeddingGenerator, get_embedding_generator
+from .eviction import EvictionStats, MultiLayerCache
 
 __all__ = [
     # Main cache interface
@@ -65,4 +66,7 @@ __all__ = [
     # Embeddings
     "EmbeddingGenerator",
     "get_embedding_generator",
+    # Eviction (P0 Phase 3)
+    "MultiLayerCache",
+    "EvictionStats",
 ]

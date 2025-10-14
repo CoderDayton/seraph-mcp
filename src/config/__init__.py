@@ -18,7 +18,6 @@ from .schemas import (
     ProvidersConfig,
     SecurityConfig,
     SeraphConfig,
-    TokenOptimizationConfig,
 )
 
 __all__ = [
@@ -37,7 +36,6 @@ __all__ = [
     "CacheConfig",
     "ObservabilityConfig",
     "FeatureFlags",
-    "TokenOptimizationConfig",
     "BudgetConfig",
     "SecurityConfig",
     "ProviderConfig",

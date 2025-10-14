@@ -46,8 +46,6 @@ from . import (
 )
 
 # Optional submodule: make import lazy/optional for environments without it
-# Note: token_optimization module does not exist yet
-token_optimization = None
 
 
 __all__ = [
@@ -58,7 +56,6 @@ __all__ = [
     "providers",
     "semantic_cache",
     "budget_management",
-    "token_optimization",
     "context_optimization",
     "__version__",
 ]

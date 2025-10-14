@@ -1,1357 +1,918 @@
 # Seraph MCP — System Design Document (SDD)
+Version: 2.0.0
+Scope: This SDD reflects the current codebase under seraph-mcp/src as shipped in this repository. It supersedes previous drafts and is intended to be source-of-truth for architecture, configuration, features, and operational behavior.
 
-Version: 3.0
-Author: Senior Software Engineer / Systems Architect
-Status: Canonical system design for Seraph MCP with monolithic architecture
-Date: 2025-10-12
-Last Updated: 2025-01-14 (Configuration audit, Pydantic v2 migration, test suite modernization, CI/CD pipeline fixes)
+Table of Contents
+- Purpose and Goals
+- Architectural Decisions
+- High-level Architecture and Lifecycle
+- Configuration Model and Environment
+- Providers and External Integrations
+- Cache System
+- Observability and Monitoring
+- Error Handling and Resiliency
+- MCP Tools (Public Interface)
+- Feature Modules
+  - Context Optimization
+  - Budget Management
+  - Semantic Cache
+- Packaging, Dependencies, and Deployment
+- Quality Gates, Testing, and Coverage
+- File Layout
+- Known Inconsistencies and Final Decisions
+- Operational Playbooks
+- Migration and Recovery
+- Release and Versioning
+- Appendices
+
+--------------------------------------------------------------------------------
+Purpose and Goals
+- Primary intent: Provide a monolithic, fast, and deterministic MCP stdio server that reduces LLM cost while preserving quality through context optimization, caching, and budget controls.
+- Secondary intent: Centralize observability, configuration, and cache usage with single-adapter rules; avoid duplication and scattered logic.
+- Non-goals: This server does not expose an HTTP API. All interactions are MCP stdio via FastMCP.
+
+--------------------------------------------------------------------------------
+Architectural Decisions
+- Monolithic with Feature Flags:
+  - Single entrypoint server at src/server.py.
+  - Feature flags control optional modules: semantic_cache, context_optimization, budget_management, quality_preservation (placeholder).
+  - Observability and cache each have a single, canonical adapter.
+
+- Transport:
+  - Model Context Protocol (MCP) stdio via fastmcp.Fas tMCP.
+  - No HTTP server in the core runtime.
+
+- Determinism:
+  - Commands are deterministic and traceable.
+  - One single-source-of-truth configuration with typed Pydantic schemas.
+
+--------------------------------------------------------------------------------
+High-level Architecture and Lifecycle
+Core packages and roles:
+- server.py: MCP tools and lifecycle hooks; feature initialization and shutdown.
+- config: Pydantic schemas and environment loader (typed configuration).
+- providers: Unified provider layer (OpenAI/Anthropic/Gemini/OpenAI-compatible factory and helpers).
+- cache: Single factory; memory and Redis backends.
+- observability: Single adapter for metrics, tracing, and structured logging.
+- context_optimization: Config, optimizer, embeddings, middleware, and models for compression.
+- budget_management: Config, SQLite tracker, enforcer, analytics.
+- semantic_cache: Config, embedding generator, ChromaDB-backed cache.
+
+
+Lifecycle:
+
+- Startup (initialize_server):
+
+  1) load_config() to build typed config from environment.
+
+  2) initialize_observability() and create_cache().
+
+  3) Initialize feature modules based on FeatureFlags and selected config toggles.
+
+  3a) For context optimization, initialize a provider instance via providers.factory using the first enabled and configured provider (openai, anthropic, gemini, openai-compatible) and pass it into the optimization subsystem.
+  4) Emit startup events and metrics.
+
+- Shutdown (cleanup_server):
+
+  1) close_all_caches(), then semantic cache, budget modules.
+
+  2) Reset globals and emit shutdown metrics/events.
+
+
+--------------------------------------------------------------------------------
+Configuration Model and Environment
+- Source of truth: src/config/schemas.py + src/config/loader.py
+- Core model: SeraphConfig
+  - environment: development|staging|production|test
+  - log_level: DEBUG|INFO|WARNING|ERROR|CRITICAL
+  - cache: CacheConfig
+    - backend: memory|redis (auto-detected: redis if REDIS_URL exists)
+    - ttl_seconds, max_size, namespace
+    - Redis only: redis_url, redis_max_connections, redis_socket_timeout
+  - observability: ObservabilityConfig
+    - backend: simple|prometheus|datadog (prometheus/datadog are placeholders unless plugin-provided)
+    - enable_metrics, enable_tracing, metrics_port, prometheus_path, datadog_api_key, datadog_site
+  - features: FeatureFlags
+    - semantic_cache, context_optimization, budget_management, quality_preservation
+  - budget: (schema) BudgetConfig (see Known Inconsistencies)
+  - security: SecurityConfig (for client HTTP adapters; not used by MCP stdio)
+  - providers: ProvidersConfig
+    - openai, anthropic, gemini, openai_compatible (ProviderConfig: enabled, api_key, model, base_url, timeout, max_retries)
+
+Environment loader (src/config/loader.py):
+- Reads .env if present; otherwise uses process env.
+- Auto-detects cache backend from REDIS_URL.
+- Populates providers.openai|anthropic|gemini|openai_compatible.enabled only when api_key AND model (and base_url for openai_compatible) are present.
+
+
+Production guardrails:
+- In production, if SecurityConfig.enable_auth is true, at least one API key must be present (enforced by validator).
+
+Context Optimization configuration:
+- src/context_optimization/config.py loads from environment:
+  - CONTEXT_OPTIMIZATION_ENABLED (default: true)
+  - CONTEXT_OPTIMIZATION_COMPRESSION_METHOD (ai|seraph|hybrid|auto; default: auto)
+  - CONTEXT_OPTIMIZATION_SERAPH_TOKEN_THRESHOLD (default: 3000)
+  - CONTEXT_OPTIMIZATION_QUALITY_THRESHOLD (default: 0.90)
+  - CONTEXT_OPTIMIZATION_MAX_OVERHEAD_MS (default: 100.0)
+  - CONTEXT_OPTIMIZATION_SERAPH_L1_RATIO (default: 0.002)
+  - CONTEXT_OPTIMIZATION_SERAPH_L2_RATIO (default: 0.01)
+  - CONTEXT_OPTIMIZATION_SERAPH_L3_RATIO (default: 0.05)
+  - CONTEXT_OPTIMIZATION_EMBEDDING_PROVIDER (default: gemini; allowed: openai, gemini, none)
+  - CONTEXT_OPTIMIZATION_EMBEDDING_MODEL (optional)
+  - CONTEXT_OPTIMIZATION_EMBEDDING_API_KEY (optional)
+  - CONTEXT_OPTIMIZATION_EMBEDDING_DIMENSIONS (optional; range 256-3072)
+
+--------------------------------------------------------------------------------
+Providers and External Integrations
+- Providers (src/providers):
+  - OpenAI (openai>=1.0.0): client creation and usage for chat and embeddings.
+  - Anthropic (anthropic>=0.25.0): Claude models support.
+  - Google Gemini (google-genai>=0.2.0): text and embeddings; v0.2.0+ uses genai.Client(api_key=...).
+  - OpenAI-compatible: for custom endpoints (Ollama/LM Studio-like).
+
+- Models.dev API client (src/providers/models_dev.py):
+  - Endpoint: https://models.dev/api.json
+  - Caches provider and model info (1-hour TTL) with httpx.AsyncClient, typed via Pydantic.
+  - estimate_cost(provider_id, model_id, input_tokens, output_tokens) returns USD cost using per-million token pricing.
+
+--------------------------------------------------------------------------------
+Cache System
+- Single factory: src/cache/factory.py (single-adapter rule)
+  - create_cache(config?: CacheConfig, name="default") returns CacheInterface.
+  - Backends:
+    - Memory (src/cache/backends/memory.py): max_size, default_ttl, namespace; stats and basic hits/misses.
+    - Redis (src/cache/backends/redis.py): optional; lazy import; requires redis>=5.0.0 and REDIS_URL.
+  - Global registry of cache instances by name.
+  - close_all_caches() for graceful shutdown.
+
+- Cache interface: src/cache/interface.py
+  - async get, set, delete, exists, clear, get_stats, close
+  - Convenience: get_many, set_many, delete_many (default implementations).
+
+--------------------------------------------------------------------------------
+Observability and Monitoring
+- Single adapter: src/observability/monitoring.py (single-adapter rule)
+  - Structured JSON logging (with timestamp, level, logger, module, function, line, trace/request IDs).
+  - Metrics: increment(), gauge(), histogram() with simple in-memory store; placeholders for prometheus/datadog integrations.
+  - Tracing: context-managed spans with duration histogram and error logging.
+  - Global accessors: get_observability(), initialize_observability().
+
+--------------------------------------------------------------------------------
+Error Handling and Resiliency
+- Feature initialization is best-effort:
+  - Context optimization, budget, semantic cache each guard their initialization; failures log as info/warn and module is disabled.
+- Provider calls and embeddings handle SDK absence with clear errors and actionable messages.
+- Webhook alerts validate URL schemes (only http/https).
+- SQLite used for budget tracking; tables created idempotently, indices present for common queries.
+
+--------------------------------------------------------------------------------
+MCP Tools (Public Interface)
+All tools are defined in src/server.py and use get_observability() for metrics. Tools are available based on feature flags and module availability.
+
+Core and Cache:
+- check_status(include_details?: bool) -> dict
+  - Returns health status, version, cache stats, and observability info (when include_details=true).
+- get_cache_stats() -> dict
+- cache_get(key: str) -> Any|None
+- cache_set(key: str, value: Any, ttl?: int) -> bool
+- cache_delete(key: str) -> bool
+- cache_clear() -> bool
+- get_metrics() -> dict
+  - Returns current in-memory metrics snapshot.
+
+
+Context Optimization:
+
+- count_tokens(content: str, model: str = "gpt-4", include_breakdown?: bool) -> dict
+  - Uses tiktoken (cl100k_base) when available; fallback to length/4 heuristic.
+- estimate_cost(content: str, model: str, operation: str = "completion", output_tokens?: int) -> dict
+  - Uses Models.dev for pricing; estimates output tokens when not provided.
+- analyze_token_efficiency(content: str, model: str = "gpt-4") -> dict
+  - Heuristic analysis: whitespace, repetition, verbosity; estimates potential token and cost savings.
+- optimize_context(content: str, method: str = "auto", quality_threshold?: float, max_overhead_ms?: float) -> dict
+  - Directly calls context optimization with a temporary config override for method/thresholds.
+- get_optimization_settings() -> dict
+- get_optimization_stats() -> dict
+
+Budget Management:
+- check_budget(estimated_cost?: float) -> dict
+  - Returns allowed flag and status for daily/weekly/monthly projected spend.
+- get_usage_report(period: str = "month", details: bool = False) -> dict
+- forecast_spending(days_ahead: int = 7) -> dict
+
+Semantic Cache:
+- lookup_semantic_cache(query: str, threshold?: float, max_results: int = 1) -> dict
+- store_in_semantic_cache(key: str, value: Any, metadata?: dict) -> dict
+- search_semantic_cache(query: str, limit?: int, threshold?: float) -> dict
+- get_semantic_cache_stats() -> dict
+- clear_semantic_cache() -> dict
+
+--------------------------------------------------------------------------------
+Feature Modules
+
+Context Optimization
+- Location: src/context_optimization
+  - config.py: ContextOptimizationConfig and load_config() from CONTEXT_OPTIMIZATION_* env vars.
+  - models.py: OptimizationResult and FeedbackRecord models.
+    - OptimizationResult fields:
+      - original_content, optimized_content
+      - tokens_before, tokens_after, tokens_saved, reduction_percentage, compression_ratio
+      - quality_score [0-1], validation_passed
+      - processing_time_ms
+      - method: 'ai' | 'seraph' | 'hybrid' | 'none'
+      - metadata: dict (notably: rollback_occurred: bool, cost_savings_usd: float, model_name: str, and any provider-specific data)
+  - optimizer.py: ContextOptimizer
+    - optimize(content): orchestrates compression path:
+      - _select_compression_method(): respects compression_method config; in 'auto' chooses 'ai' for ≤ seraph_token_threshold tokens, else 'seraph'.
+      - _optimize_with_ai(), _optimize_with_seraph(), _optimize_hybrid(): multiple strategies.
+      - _calculate_cost_savings(): leverages models.dev and internal token counts.
+      - _record_budget_savings(): if a budget tracker is present.
+      - get_stats(), clear_cache() and internal statistics.
+    - Compression strategies:
+      - AI: LLMLingua-2 based compression where appropriate.
+      - Seraph: deterministic multi-layer (L1/L2/L3 ratios; configurable).
+      - Hybrid: blend of AI and Seraph.
+
+    - embeddings.py: Provider-backed embedding service (no direct SDK coupling)
+      - Uses providers.factory to obtain a provider client for embeddings (openai, openai-compatible, gemini)
+      - create_embedding_service(provider, provider_config, model, dimensions?, task_type?, cache_embeddings?) -> ProviderEmbeddingService
+      - cosine_similarity helper
+
+  - middleware.py: OptimizedProvider wrapper
+    - Wraps any provider; intercepts generate/chat/complete; applies optimization unless explicitly skipped.
+    - Augments response with optimization metadata:
+      - tokens_saved, reduction_percentage, quality_score, cost_savings_usd, processing_time_ms
+    - Tracks middleware-level stats: total_calls, optimized_calls, total_tokens_saved, total_cost_saved.
+  - seraph_compression.py: deterministic compression layers.
+- Key behaviors and notes:
+  - The authoritative performance field is processing_time_ms on OptimizationResult and in middleware response metadata.
+  - Selection heuristic is token-count threshold based in 'auto'.
+  - Budget integration is opportunistic; if a budget tracker exists, savings are recorded.
+
+Budget Management
+- Location: src/budget_management
+  - config.py: BudgetConfig, EnforcementMode, BudgetPeriod (independent of src/config/schemas.py; see Known Inconsistencies)
+    - enabled: bool; daily_limit|weekly_limit|monthly_limit: float|None
+    - enforcement_mode: soft|hard; alert_thresholds: list[float]; db_path; webhook fields; forecasting/historical days.
+  - tracker.py: SQLite-backed BudgetTracker (./data/budget.db by default)
+    - Tables:
+      - cost_records(id, timestamp, provider, model, operation, input_tokens, output_tokens, cost_usd, metadata, created_at)
+      - budget_configs(id, period_type, limit_usd, alert_thresholds, enforcement_mode, created_at, updated_at)
+      - budget_alerts(id, timestamp, period_type, threshold, current_spend, budget_limit, message, created_at)
+    - Indices on timestamp, provider, model.
+    - Queries:
+      - get_spending(period: day|week|month|custom)
+      - get_daily_spending_history(days)
+      - record_alert(), get_alerts(), clear_old_records(), get_stats()
+  - enforcer.py: BudgetEnforcer
+    - check_budget(estimated_cost?): projects spend and enforces soft/hard mode; writes alerts and returns status.
+    - get_budget_status(): rolled-up daily/weekly/monthly limits/spend/remaining/percentages.
+    - Webhook alerts (optional) with URL scheme validation.
+  - analytics.py: BudgetAnalytics
+    - forecast_spending(days_ahead, historical_days): simple linear projection with confidence interval; trend detection.
+    - analyze_spending_patterns(days): peak days, top models/providers, cost per request.
+    - get_cost_breakdown(period): provider/model breakdown, cost_per_1k_tokens.
+    - compare_periods(period1, period2), generate_report(report_type, days).
+- Server integration:
+  - On startup, initialized when features.budget_management is true.
+
+Semantic Cache
+- Location: src/semantic_cache
+  - config.py: SemanticCacheConfig
+    - embedding_provider: "openai" | "openai-compatible" | "gemini" (default: openai)
+    - embedding_model (default: text-embedding-3-small), embedding_api_key (required), embedding_base_url?
+    - similarity_threshold (default 0.80), max_results (default 10)
+    - ChromaDB: collection_name, persist_directory, max_cache_entries
+    - Performance: batch_size, cache_embeddings
+  - embeddings.py: EmbeddingGenerator (unified wrapper)
+    - Delegates to context_optimization.embeddings.ProviderEmbeddingService
+    - Supports openai, openai-compatible, gemini via provider-backed architecture
+    - Local (sentence-transformers) support removed in v2.0.0 to reduce dependencies
+    - In-memory embedding cache optional
+  - cache.py: SemanticCache on ChromaDB
+    - get(query, threshold?, max_results?): returns best semantic hit above threshold.
+    - set(key, value, metadata?): embeds key and stores value string with metadata.
+    - search(query, limit?, threshold?): returns ranked matches above threshold.
+    - clear(): clears the collection; get_stats(); close().
+- Dependencies:
+  - Optional extra semantic_cache in pyproject installs chromadb only
+  - Embeddings now use unified provider-backed service (no sentence-transformers)
+- Note:
+  - Semantic Cache now uses the unified embedding service from context_optimization
+  - For local embedding alternatives, use openai-compatible with Ollama or similar local endpoints
+
+--------------------------------------------------------------------------------
+Packaging, Dependencies, and Deployment
+- Packaging:
+  - pyproject.toml uses setuptools build-backend; package name seraph-mcp; scripts entrypoint seraph-mcp = "src.server:main".
+- Core dependencies:
+  - fastmcp, pydantic, pydantic-settings, python-dotenv, httpx, redis
+  - Providers: openai, anthropic, google-genai
+  - Token optimization: tiktoken, llmlingua, blake3
+- Optional dependencies:
+  - [semantic_cache]: chromadb only (sentence-transformers removed in v2.0.0)
+  - [all]: includes semantic_cache extras
+- Running:
+  - Entry: seraph-mcp (invokes src.server:main). For consistency with project rules, prefer `uv run seraph-mcp` in local environments that use uv.
+- Transport:
+  - MCP stdio only.
+
+--------------------------------------------------------------------------------
+Quality Gates, Testing, and Coverage
+- Testing:
+  - pytest with asyncio support, markers: unit, integration, slow.
+  - testpaths = ["tests"] (no tests are included in this snapshot).
+- Lint/Format:
+  - ruff with select ["E","F","W","I","N","B","UP"]; ignore ["E501","B008","C901"].
+- Typing:
+  - mypy strict settings; per-file overrides for known unreachable in src.server and gemini_provider.
+- Coverage:
+  - fail_under = 70
+  - Omissions (by design, tested via integration or external dependencies): server.py entrypoint, provider implementations, semantic_cache, budget_management, context_optimization middleware/optimizer, observability/monitoring, redis backend, provider factories.
+
+--------------------------------------------------------------------------------
+File Layout
+- docs/
+  - SDD.md (this file), docs/redis, docs/publishing
+- src/
+  - server.py (MCP server and tools)
+  - config/ (schemas, loader, public get_config)
+  - providers/ (base, factory, openai, anthropic, gemini, openai_compatible, models_dev)
+  - cache/ (interface, factory, backends/{memory, redis})
+  - observability/ (monitoring)
+  - context_optimization/ (config, embeddings, optimizer, middleware, models, seraph_compression)
+  - budget_management/ (config, tracker, enforcer, analytics)
+  - semantic_cache/ (config, embeddings, cache)
+- data/ (runtime data: budget.db, chromadb persistence)
+- tests/ (if present)
+- pyproject.toml, uv.lock, README.md, LICENSE, CONTRIBUTING.md, fastmcp.json
+
+--------------------------------------------------------------------------------
+Known Inconsistencies and Final Decisions
+1) Embeddings pathway unification (COMPLETED):
+
+   - Context Optimization embeddings use provider-backed ProviderEmbeddingService (openai, openai-compatible, gemini)
+   - Semantic Cache now uses the same unified embedding service via wrapper
+   - Local (sentence-transformers) support removed from entire project to reduce dependencies
+   - Single embedding abstraction achieved across all modules
+   - For local embedding needs, users should configure openai-compatible with local endpoints (Ollama, LM Studio, etc.)
+
+
+2) Security configuration:
+   - SecurityConfig is present for potential client HTTP adapters, but is not used by MCP stdio. This is expected and benign.
+
+3) Observability backends:
+   - "prometheus" and "datadog" backends are placeholders in the single adapter; production integration would come via a plugin or adapter extension. The "simple" backend is canonical at present.
+
+--------------------------------------------------------------------------------
+Operational Playbooks
+- Startup:
+  - Ensure REDIS_URL if using Redis cache; ensure SQLite write access to ./data for budget.db; ensure ChromaDB persistence directory exists when semantic_cache enabled.
+  - Set FeatureFlags via environment variables consumed by config.loader and context_optimization loader.
+- Shutdown:
+  - Server lifecycle gracefully closes caches and optional modules; no manual steps required.
+- Switching Cache Backends:
+  - Set REDIS_URL and CACHE_BACKEND=redis (optional; loader auto-detects redis if REDIS_URL is present). Install redis>=5.0.0.
+- Budget DB Maintenance:
+  - Use BudgetTracker.clear_old_records(days=90) to prune long-term storage.
+- Semantic Cache Maintenance:
+  - Use MCP tools get_semantic_cache_stats, clear_semantic_cache. Persisted in data/chromadb.
+
+--------------------------------------------------------------------------------
+Migration and Recovery
+- Cache backend migration:
+  - Memory -> Redis: set REDIS_URL and switch backend; no code changes required.
+- Semantic cache collection rebuild:
+  - clear_semantic_cache to reset the collection if schema changes or to reclaim space.
+
+--------------------------------------------------------------------------------
+Release and Versioning
+- Project version: 2.0.0 in pyproject.toml
+Version: 2.0.0
+- Version 2.0.0 Breaking Changes:
+  - Removed `optimize_tokens` tool (use `optimize_context` instead)
+  - Removed obsolete "optimization" config section (ENABLE_OPTIMIZATION, OPTIMIZATION_MODE, QUALITY_THRESHOLD, MAX_OVERHEAD_MS)
+  - Removed `ENABLE_BUDGET_ENFORCEMENT` environment variable (use `BUDGET_ENABLED` instead)
+  - Removed dual budget initialization path (only `features.budget_management` flag is used)
+  - Standardized middleware metadata field to `processing_time_ms` (removed `optimization_time_ms` alias)
+  - Removed local (sentence-transformers) embedding support from entire project
+  - Semantic Cache now requires API provider configuration (openai, openai-compatible, or gemini)
+  - Unified embedding service across context_optimization and semantic_cache modules
+- Suggested semantic versioning with release notes summarizing:
+  - Feature flags
+  - Provider support changes
+  - Configuration changes
+  - Breaking changes
+
+--------------------------------------------------------------------------------
+Appendix A — Environment Variables Index (Non-exhaustive)
+Core:
+- ENVIRONMENT: development|staging|production|test
+- LOG_LEVEL: DEBUG|INFO|WARNING|ERROR|CRITICAL
+
+Cache:
+- CACHE_BACKEND: memory|redis
+- CACHE_TTL_SECONDS, CACHE_MAX_SIZE, CACHE_NAMESPACE
+- REDIS_URL, REDIS_MAX_CONNECTIONS, REDIS_SOCKET_TIMEOUT
+
+Observability:
+- OBSERVABILITY_BACKEND: simple|prometheus|datadog
+- ENABLE_METRICS, ENABLE_TRACING
+- METRICS_PORT, PROMETHEUS_PATH
+- DATADOG_API_KEY, DATADOG_SITE
+
+Feature Flags:
+- No direct env keys in schemas; set via downstream envs or higher-level orchestration prior to config.load.
+  - Context Optimization enabling uses CONTEXT_OPTIMIZATION_ENABLED; others can be wired similarly when needed.
+
+Providers (enabled only if api_key AND model are present; base_url also required for openai_compatible):
+- OPENAI_API_KEY, OPENAI_MODEL, OPENAI_BASE_URL?, OPENAI_TIMEOUT?, OPENAI_MAX_RETRIES?
+- ANTHROPIC_API_KEY, ANTHROPIC_MODEL, ANTHROPIC_BASE_URL?, ANTHROPIC_TIMEOUT?, ANTHROPIC_MAX_RETRIES?
+- GEMINI_API_KEY, GEMINI_MODEL, GEMINI_BASE_URL?, GEMINI_TIMEOUT?, GEMINI_MAX_RETRIES?
+- OPENAI_COMPATIBLE_API_KEY, OPENAI_COMPATIBLE_MODEL, OPENAI_COMPATIBLE_BASE_URL, OPENAI_COMPATIBLE_TIMEOUT?, OPENAI_COMPATIBLE_MAX_RETRIES?
+
+Context Optimization:
+- CONTEXT_OPTIMIZATION_ENABLED
+- CONTEXT_OPTIMIZATION_COMPRESSION_METHOD
+- CONTEXT_OPTIMIZATION_SERAPH_TOKEN_THRESHOLD
+- CONTEXT_OPTIMIZATION_QUALITY_THRESHOLD
+- CONTEXT_OPTIMIZATION_MAX_OVERHEAD_MS
+- CONTEXT_OPTIMIZATION_SERAPH_L1_RATIO
+- CONTEXT_OPTIMIZATION_SERAPH_L2_RATIO
+- CONTEXT_OPTIMIZATION_SERAPH_L3_RATIO
+- CONTEXT_OPTIMIZATION_EMBEDDING_PROVIDER
+- CONTEXT_OPTIMIZATION_EMBEDDING_MODEL?
+- CONTEXT_OPTIMIZATION_EMBEDDING_API_KEY?
+- CONTEXT_OPTIMIZATION_EMBEDDING_DIMENSIONS?
+
+Budget:
+- BUDGET_ENABLED (default: false)
+- DAILY_BUDGET_LIMIT?
+- WEEKLY_BUDGET_LIMIT?
+- MONTHLY_BUDGET_LIMIT?
+- BUDGET_ENFORCEMENT_MODE (default: soft)
+- BUDGET_ALERT_THRESHOLDS (default: 0.5,0.75,0.9)
+- BUDGET_DB_PATH (default: ./data/budget.db)
+- BUDGET_WEBHOOK_URL?
+- BUDGET_WEBHOOK_ENABLED (default: false)
+- BUDGET_FORECASTING_DAYS (default: 7)
+- BUDGET_HISTORICAL_DAYS (default: 30)
+
+--------------------------------------------------------------------------------
+Appendix B — MCP Tool Availability Matrix
+- Always available:
+  - check_status, get_cache_stats, cache_get, cache_set, cache_delete, cache_clear, get_metrics
+- Context Optimization enabled:
+  - count_tokens, estimate_cost, analyze_token_efficiency, optimize_context, get_optimization_settings, get_optimization_stats
+- Budget Management enabled:
+  - check_budget, get_usage_report, forecast_spending
+- Semantic Cache enabled:
+  - lookup_semantic_cache, store_in_semantic_cache, search_semantic_cache, get_semantic_cache_stats, clear_semantic_cache
+
+--------------------------------------------------------------------------------
+Appendix C — Cost Estimation and Savings
+- Cost estimation and savings prefer Models.dev dynamic pricing when available, with graceful fallbacks.
+- Savings recorded into BudgetTracker when present, enabling analytics and forecasting to reflect realized optimization ROI.
+
+
+--------------------------------------------------------------------------------
+Appendix D — Completion Roadmap
+
+This roadmap focuses on completing partially implemented features and addressing gaps identified through code analysis and industry best practices research. Items are prioritized by production readiness impact.
+
+## Previously Completed ✅
+- Budget configuration unification (v2.0.0)
+- Embedding unification (v2.0.0)
+- Backward compatibility removal (v2.0.0)
+- **P0 Phase 1a**: Error framework (ErrorCode, circuit breaker, retry, validation schemas) ✅
+- **P0 Phase 1b**: Input validation applied to all 18 MCP tools ✅
+- **P0 Phase 1c**: Provider integration with retry + circuit breaker (ResilientProvider) ✅
+- **P0 Phase 2**: Complete get_optimization_stats with rolling window and percentiles ✅
+- **P0 Phase 3**: Multi-layer LRU+FIFO semantic cache eviction (10:90 ratio) + TTL support ✅
+- **Type Safety**: Full mypy compliance (46 source files, strict mode) + pre-commit hook integration ✅
+- **Test Suite**: Fixed 22 pre-existing test failures (async/await + cache size expectations) ✅
+- **CI/CD**: Verified GitHub Actions workflows (type-check, pre-commit, tests) ✅
+- **Security**: Fixed bandit security scan issues (B311 - random.uniform is safe for retry jitter) ✅
 
 ---
 
-## Purpose
-This document defines the architecture for Seraph MCP, a comprehensive AI optimization platform delivered as a single, integrated package. The platform provides token optimization, model routing, semantic caching, context optimization, budget management, and quality preservation capabilities.
+## P0 - Critical for Production Readiness (3 items)
 
-**Design Philosophy: Automatic with Minimal Configuration**
-- Works out-of-the-box with just an API key
-- Intelligent defaults for 95% of use cases
-- Only expose settings users actually need to change
-- Everything else works automatically
+### 1. Robust Error Handling and Input Validation
 
-### Architectural Decision: Monolithic with Feature Flags
+**Current State**: ✅ Phase 1a-1b Complete - Error framework and validation fully implemented
 
-**Why Monolithic Over Plugins:**
+**Implementation Complete**:
+- ✅ ErrorCode enum with 20+ standardized error codes (INVALID_INPUT, PROVIDER_ERROR, RATE_LIMITED, CIRCUIT_OPEN, etc.)
+- ✅ Enhanced error types: CircuitBreakerError with state tracking
+- ✅ Error utilities: make_error_response(), is_retryable_error(), extract_error_code()
+- ✅ Retry module: exponential backoff with jitter, configurable max_retries=3
+- ✅ Circuit breaker module: pybreaker integration with fail_max=7, reset_timeout=60s
+- ✅ Circuit breaker per provider (provider_name + model key)
+- ✅ Observability integration: metrics for circuit breaker state changes, failures, successes
+- ✅ Dependencies added: pybreaker>=1.0.0, cachetools>=5.3.0
 
-After extensive analysis from user and maintainer perspectives, we chose a monolithic architecture with internal modularity over a plugin system for the following reasons:
+**Phase 1b Complete - Tool Validation (All 18 Tools)**:
+- ✅ Pydantic validation schemas for all MCP tool inputs (src/validation/tool_schemas.py)
+- ✅ Validation decorator with automatic error handling (src/validation/decorators.py)
+- ✅ Applied validation to ALL 18 tools:
+  - ✅ check_status, get_metrics, get_cache_stats
+  - ✅ cache_get, cache_set, cache_delete, cache_clear
+  - ✅ count_tokens, estimate_cost, analyze_token_efficiency
+  - ✅ check_budget, get_usage_report, forecast_spending
+  - ✅ lookup_semantic_cache, store_in_semantic_cache, search_semantic_cache
+  - ✅ get_semantic_cache_stats, clear_semantic_cache
+  - ✅ optimize_context, get_optimization_stats, get_optimization_settings
+- ✅ Structured error responses with validation_errors array
+- ✅ Observability integration: validation.failed, validation.error metrics
+- ✅ Field constraints: min/max lengths, value ranges, pattern matching
+- ✅ 18 validation schemas covering all tools
 
-**User Benefits:**
-- ✅ Single installation: `npx -y seraph-mcp` (or `pip install seraph-mcp`)
-- ✅ All features work out-of-the-box without additional plugin management
-- ✅ One version number to track (no plugin compatibility matrix)
-- ✅ Unified documentation in one place
-- ✅ Simpler troubleshooting (no "which plugin?" questions)
-- ✅ Matches marketing promise: "Comprehensive AI Optimization Platform"
+**Validation Applied To**:
+All 18 MCP tools now have strict input validation via @validate_input decorator.
 
-**Maintainer Benefits:**
-- ✅ Single release cycle (one version, one changelog)
-- ✅ Simpler CI/CD (one build, one test suite, one deployment)
-- ✅ Integrated testing (test features together as users will use them)
-- ✅ No cross-package compatibility testing
-- ✅ Unified issue tracking
-- ✅ 90% less maintenance overhead
+**Phase 1c Complete - Provider Integration**:
+- ✅ ResilientProvider wrapper integrates retry and circuit breaker
+- ✅ Retry logic with exponential backoff applied to all provider.complete() calls
+- ✅ Circuit breaker per provider prevents cascading failures
+- ✅ Graceful degradation: list_models, get_model_info, estimate_cost, health_check return defaults on failure
+- ✅ Comprehensive observability: provider.complete.attempt, success, failed, circuit_open, retry.attempt metrics
+- ✅ Zero-config defaults with full configurability</parameter>
 
-**When Plugins Would Make Sense:**
-- If third-party developers need to extend the platform
-- If there are 50+ features and users need à la carte selection
-- If features have conflicting dependencies
-- If the team grows to 10+ people working on separate codebases
+**Implementation Notes**:
+- Errors: `src/errors.py` (ErrorCode enum, error utilities)
+- Resilience: `src/resilience/retry.py` (with_retry, exponential_backoff)
+- Resilience: `src/resilience/circuit_breaker.py` (CircuitBreakerManager, get_circuit_breaker)
+- Validation: `src/validation/tool_schemas.py` (18 Pydantic models)
+- Validation: `src/validation/decorators.py` (@validate_input decorator)
+- Circuit breaker config: `fail_max=7, reset_timeout=60s` (middle ground between aggressive and lenient)
+- Retry logic: exponential backoff with jitter, max_retries=3, base_delay=1.0s
+- Provider rate limiting handled by providers themselves; application layer handles resulting errors gracefully
+- Structured error responses: `{success: false, error_code: "...", message: "...", details: {...}}`
+- Validation schemas include: content length limits (1-1M chars), model name validation, threshold ranges (0-1), TTL limits (0-30 days)
 
-**Current Reality:** Single team, 6 core features (all part of value proposition), harmonious dependencies, users want the complete platform.
+**Phase 1c Implementation Files**:
+- `src/providers/resilient_provider.py`: ResilientProvider wrapper class
+- `src/providers/__init__.py`: Exports ResilientProvider and wrap_provider_with_resilience()
 
-Principles:
-- **Automatic Operation**: Works with minimal configuration (just API keys)
-- **Comprehensive**: Include all AI optimization features users need
-- **Modular Internally**: Organized codebase with clear separation of concerns
-- **Intelligent Defaults**: 95% of settings have smart defaults that just work
-- **Single Source of Truth**: One factory/adapter per capability (cache, observability)
-- **Typed & Traceable**: Typed configuration and comprehensive observability
-- **Safe-by-default**: Conservative defaults (timeouts, budgets, circuit breakers)
-- **Stdio MCP only**: Uses Model Context Protocol (MCP) over stdio, not HTTP
-
----
-
-## High-level Architecture
-
-Components (All Integrated):
-- **Core Runtime**
-  - `src/server.py` — FastMCP stdio server with all MCP tools and lifecycle
-  - `src/config/` — typed configuration models (Pydantic) with feature flags
-  - `src/cache/` — canonical cache factory and backends (memory, Redis)
-  - `src/observability/` — observability adapter (metrics, traces, logs)
-  - `src/errors.py` — standardized error types
-
-- **AI Optimization Features** (All included, feature-flagged)
-  - `src/token_optimization/` — Token reduction and cost estimation
-    - Token counting for 15+ models (OpenAI, Anthropic, Google, Mistral)
-    - 5 optimization strategies (whitespace, redundancy, compression, etc.)
-    - Cost estimation with real-time pricing data
-    - Quality preservation with configurable thresholds
-  - `src/model_routing/` — Intelligent model selection (future)
-  - `src/semantic_cache/` — Vector-based similarity caching (future)
-  - `src/context_optimization/` — **Hybrid Compression System** ✅ IMPLEMENTED
-    - **Two Compression Methods**:
-      - **AI Compression**: Fast, nuanced, best for short prompts (≤3k tokens)
-      - **Seraph Compression**: Deterministic, cacheable, multi-layer (L1/L2/L3), best for long/recurring contexts (>3k tokens)
-      - **Hybrid Mode**: Seraph pre-compress + AI polish for optimal results
-    - **Automatic Method Selection**: Auto-detects content size and routes to best method
-    - **Multi-Layer Architecture** (Seraph):
-      - L1: Ultra-small skeleton (0.2% of original) - bullets from anchors
-      - L2: Compact abstracts (1% of original) - section summaries
-      - L3: Factual extracts (5% of original) - top salient chunks via BM25
-    - **Deterministic & Cacheable**: Same input → same output, integrity-hashed
-    - **Quality Validation**: AI validates quality with auto-rollback
-    - **Budget Integration**: Automatic cost savings calculation and tracking
-    - **Performance**: <100ms processing, >=90% quality, 20-40% token reduction
-    - **Configuration**: Auto mode works out-of-the-box, 10 optional tuning parameters
-    - **Files**: config.py, models.py, optimizer.py, middleware.py, seraph_compression.py
-  - `src/budget_management/` — Cost tracking and enforcement (future)
-  - `src/quality_preservation/` — Multi-dimensional validation (future)
-
-- **Tooling & Docs**
-  - `examples/` — usage samples
-  - `tests/` — comprehensive unit/integration tests
-  - `docs/` — design docs & SDD (this file)
-
-Data flow:
-1. MCP client connects via stdio to `src/server.py`
-2. Server validates request and loads config via `src/config`
-3. Feature flags determine which tools are active
-4. MCP tools route to feature-specific handlers
-5. Cache access uses `src/cache/factory.get_cache()` (memory or Redis)
-6. All operations emit metrics/traces/logs via `src/observability`
-7. Features integrate seamlessly with core cache and observability
-
-Design principles:
-- **All features included** in one package for simplicity
-- **Automatic operation** - features enabled by having API keys configured
-- **Minimal configuration** - only require what users must customize (API keys, budget limits)
-- **Internal modularity** maintains code organization
-- **Shared dependencies** (Redis, tiktoken, anthropic) installed once
-- **Smart defaults** for all tuning parameters
-- Transport is MCP stdio only (no HTTP)
-
-## Configuration Philosophy
-
-**Minimal Required Configuration:**
-```bash
-# Only 1 thing required to get started:
-OPENAI_API_KEY=sk-...
-```
-
-**Recommended Configuration:**
-```bash
-# Add budget limits (optional but recommended)
-DAILY_BUDGET_LIMIT=10.0
-MONTHLY_BUDGET_LIMIT=200.0
-```
-
-**Everything Else is Automatic:**
-- Context optimization: Enabled with smart defaults
-- Token optimization: Always active
-- Semantic cache: Uses memory, upgrades to Redis if URL provided
-- Quality validation: Automatic with >=90% threshold
-- Budget tracking: Automatic when limits set
-- Cost calculation: Automatic per model
-
-**Advanced Tuning (Rarely Needed):**
-Only 3 parameters if you need to adjust optimization behavior:
-```bash
-CONTEXT_OPTIMIZATION_COMPRESSION_METHOD=auto  # Auto-selects best method
-CONTEXT_OPTIMIZATION_SERAPH_TOKEN_THRESHOLD=3000  # AI for ≤3k, Seraph for >3k
-CONTEXT_OPTIMIZATION_QUALITY_THRESHOLD=0.90  # Default works great
-CONTEXT_OPTIMIZATION_MAX_OVERHEAD_MS=100.0   # Already fast
-CACHE_TTL_SECONDS=3600                        # 1 hour is optimal
-```
-
-Core Interfaces (stable):
-- Cache interface (async):
-  - `async def get(key: str) -> Optional[Any]`
-  - `async def set(key: str, value: Any, ttl: Optional[int] = None) -> None`
-  - `async def delete(key: str) -> None`
-  - `async def exists(key: str) -> bool`
-
-- Context Optimization interface (automatic):
-  - `wrap_provider(provider) -> OptimizedProvider` - Automatic middleware
-  - `async optimize_content(content, provider) -> OptimizationResult` - Manual control
-  - All optimization happens transparently via middleware
-  - `async def clear() -> bool`
-  - `async def get_stats() -> dict`
-  - Optional bulk helpers: `get_many`, `set_many`, `delete_many`
-- Observability adapter:
-  - `increment(metric, value=1.0, tags=None)`
-  - `gauge(metric, value, tags=None)`
-  - `histogram(metric, value, tags=None)`
-  - `event(name, payload)`
-  - `trace(span_name, tags=None)` context manager
-
----
-
-## Protocol & Transport
-
-- MCP stdio Protocol (mandatory):
-  - JSON-RPC 2.0 over stdin/stdout.
-  - Compatible with Claude Desktop and other MCP clients.
-  - No HTTP endpoints or REST APIs in core.
-
-- FastMCP Framework:
-  - Tools via `@mcp.tool()`
-  - Lifecycle via `@mcp.lifespan()`
-  - Config via `fastmcp.json`
-
----
-
-## MCP Tools
-
-### Core Tools (Always Available)
-- `check_status(include_details: bool)` — System health and status
-- `get_cache_stats()` — Cache metrics and stats (backend, hit-rate, etc.)
-- `cache_get(key: str)` — Retrieve value from cache
-- `cache_set(key: str, value: Any, ttl: Optional[int])` — Store value in cache
-- `cache_delete(key: str)` — Delete key from cache
-- `cache_clear()` — Clear all cache entries
-- `get_metrics()` — Observability metrics snapshot
-
-### Token Optimization Tools (Feature Flag: `features.token_optimization`)
-- `optimize_tokens(content: str, target_reduction: Optional[float], model: str, strategies: Optional[List[str]])` — Reduce token count while preserving quality
-- `count_tokens(content: str, model: str, include_breakdown: bool)` — Accurate token counting for any model
-- `estimate_cost(content: str, model: str, operation: str, output_tokens: Optional[int])` — Calculate API costs before requests
-- `analyze_token_efficiency(content: str, model: str)` — Identify optimization opportunities
-
-### Future Tools (Feature Flags: `features.*`)
-- Model routing, semantic cache, context optimization, budget management, and quality preservation tools will be added as features are implemented
-- `cache_get(key: str)` — Retrieve from cache.
-- `cache_set(key, value, ttl)` — Store in cache (optional TTL).
-- `cache_delete(key)` — Delete a cache key.
-- `cache_clear()` — Clear all cache entries (namespace-scoped).
-- `get_metrics()` — Observability metrics snapshot.
-
----
-
-## Configuration & Environment
-
-### Feature Flags
-
-All features can be enabled/disabled via configuration:
-
+**Usage**:
 ```python
-class FeatureFlags(BaseModel):
-    token_optimization: bool = True   # Enable token optimization
-    model_routing: bool = False       # Enable model routing (future)
-    semantic_cache: bool = False      # Enable semantic caching (future)
-    context_optimization: bool = False  # Enable context optimization (future)
-    budget_management: bool = False   # Enable budget management (future)
-    quality_preservation: bool = False  # Enable quality preservation (future)
-```
+from src.providers import create_provider, wrap_provider_with_resilience, ProviderConfig
 
-### Configuration Schema
-
-Configuration is typed using Pydantic and loaded in order:
-1. Defaults in code
-2. `.env` (if present)
-3. Environment variables
-
-Mandatory environment variables:
-- `ENVIRONMENT` = production | staging | development
-- `CACHE_BACKEND` = memory | redis
-  - Defaults to `memory` if unset (backward-compatible).
-- `CACHE_TTL_SECONDS` = default TTL for cache entries (0 = no expiry)
-- `CACHE_MAX_SIZE` = max entries (memory backend)
-- `CACHE_NAMESPACE` = key namespace/prefix (applies to all backends)
-- `OBSERVABILITY_BACKEND` = simple | prometheus | datadog
-- `ENABLE_METRICS` = true | false
-- `ENABLE_TRACING` = true | false
-- `LOG_LEVEL` = DEBUG | INFO | WARNING | ERROR | CRITICAL
-
-Conditional (required when enabled by the toggle):
-- When `CACHE_BACKEND=redis`:
-  - `REDIS_URL` (required) e.g., `redis://localhost:6379/0` or `rediss://...`
-  - `REDIS_MAX_CONNECTIONS` (default 10)
-  - `REDIS_SOCKET_TIMEOUT` seconds (default 5)
-
-- When `OBSERVABILITY_BACKEND=datadog`:
-  - `DATADOG_API_KEY` (required)
-  - `DATADOG_SITE` (default `datadoghq.com`)
-
-Security and secrets:
-- Never commit secrets.
-- Use environment-bound secret stores in production.
-- Always use TLS for external calls (e.g., `rediss://` for Redis over TLS).
-
-Example `.env` snippets:
-- Memory (default):
-  - `CACHE_BACKEND=memory`
-  - `CACHE_TTL_SECONDS=3600`
-  - `CACHE_MAX_SIZE=1000`
-  - `CACHE_NAMESPACE=seraph`
-- Redis (toggle on):
-  - `CACHE_BACKEND=redis`
-  - `REDIS_URL=redis://localhost:6379/0`
-  - `REDIS_MAX_CONNECTIONS=20`
-  - `REDIS_SOCKET_TIMEOUT=5`
-  - `CACHE_TTL_SECONDS=3600`
-  - `CACHE_NAMESPACE=seraph`
+config = ProviderConfig(api_key="sk-...")
+base = create_provider("openai", config)
+resilient = wrap_provider_with_resilience(base)  # Adds retry + circuit breaker
+response = await resilient.complete(request)
+```</parameter>
 
 ---
 
-## Cache System
-
-Single factory (canonical):
-- `src/cache/factory.py` creates and returns cache instances.
-- Selection is based on `CACHE_BACKEND`:
-  - `memory` → In-process LRU cache with TTL and namespace support.
-  - `redis` → Redis-backed cache with JSON serialization, TTL, namespace, and batch ops.
-
-Memory backend:
-- LRU eviction at capacity (`CACHE_MAX_SIZE`).
-- Per-key TTL with optional default TTL.
-- Namespace-prefixed keys.
-- Lock-protected, async-safe operations.
-
-Redis backend (core optional):
-- Async Redis client (redis-py 4+) with JSON serialization.
-- Namespaced keys (`<namespace>:<key>`).
-- Per-key TTL (`EX` seconds); `ttl=None` → use default TTL; `ttl=0` → no expiry.
-- Batch ops using MGET / pipelined SET/DEL for efficiency.
-- `get_stats()` includes hit/miss counters and light Redis INFO when available.
-- Toggle behavior:
-  - Memory remains default for simplicity and zero external dependencies.
-  - Switch to Redis by setting `CACHE_BACKEND=redis` and valid `REDIS_URL`.
-
-Resource lifecycle:
-- All cache instances must be closed on shutdown (`close_all_caches()`).
-- The server lifecycle hook (`@mcp.lifespan`) initializes cache and closes it gracefully.
-
----
-
-## Observability & Monitoring
-
-- Centralized in `src/observability`.
-- Emit:
-  - Tool invocation counts
-  - Cache hits/misses
-  - Latency histograms
-  - Error counts per type
-- Structured logs (JSON), include trace IDs.
-- `get_metrics()` tool surfaces current metrics snapshot.
-
----
-
-## Error Handling & Resiliency
-
-- Standardized exceptions in `src/errors.py`.
-- MCP tools catch and return structured error responses.
-- Async operations have strict timeouts (default 30s; configurable).
-- Graceful shutdown flushes observability buffers and closes caches.
-
----
-
-## Packaging, Deployment & Runtime
-
-- Core package contains only `src/` and minimal runtime dependencies.
-- Redis client dependency is allowed in core (as an optional runtime path) to support the Redis backend toggle.
-- Deployment via FastMCP:
-  - Dev: `fastmcp dev src/server.py`
-  - Production: Configure MCP client to run the stdio server.
-- Containerization:
-  - Use slim Python base image
-  - Entrypoint: `fastmcp run fastmcp.json`
-
----
-
-## CI / CD & Quality Gates
-
-Mandatory on every PR:
-- `ruff` linting and formatting
-- `mypy` type checking
-- Unit test coverage threshold (core default ≥ 85%)
-- Integration smoke tests (server starts, tools callable)
-- Dependency vulnerability scan
-- Secrets scan
-- Tests must accompany changes in `src/`
-
-Code review checklist:
-- Adherence to SDD (single factory/adapter per capability).
-- No HTTP in core (stdio MCP only).
-- Config typed and validated.
-- Metrics/traces/logging for new code.
-- Redis usage guarded behind CACHE_BACKEND toggle.
-
----
-
-## Testing Strategy
-
-### Test Organization
-- `tests/unit/` — Unit tests for individual modules
-- `tests/integration/` — Integration tests across features
-- `tests/performance/` — Performance benchmarks
-
-### Coverage Requirements
-- Overall: ≥85% code coverage
-- Core modules: ≥90% coverage
-- Feature modules: ≥85% coverage
-- Critical paths: 100% coverage
-
-### Test Scope
-- Core cache and observability
-- Token optimization (counter, optimizer, cost estimator)
-- Feature flag behavior
-- Configuration validation
-- Error handling and edge cases
-
-- Unit tests: `tests/unit/` (cache, config, observability, errors).
-- Integration tests: `tests/integration/` (MCP tools end-to-end).
-- Smoke tests: cache operations and lifecycle hooks.
-- Performance: optional suite before major releases (cache hit rates, latencies).
-
----
-
-## Feature Module Architecture (Internal Organization)
-
-### Module Structure
-
-Each feature is organized as a self-contained module within `src/`:
-
-```
-src/seraph_mcp/
-├── <feature_name>/
-│   ├── __init__.py       # Public API exports
-│   ├── config.py         # Feature-specific configuration
-│   ├── tools.py          # MCP tools for the feature
-│   └── <implementation>  # Feature logic
-```
-
-### Integration Pattern
-
-Features integrate with core systems:
-
-1. **Configuration**: Feature config classes in `src/config/schemas.py`
-2. **Tools Registration**: Tools registered in `src/server.py` based on feature flags
-3. **Cache Integration**: Use `create_cache()` from core
-4. **Observability**: Use `get_observability()` from core
-5. **Error Handling**: Use standard error types from `src/errors.py`
-
-### Example: Token Optimization Module
-
-```
-src/token_optimization/
-├── __init__.py           # Exports: TokenCounter, TokenOptimizer, etc.
-├── config.py             # TokenOptimizationConfig
-├── tools.py              # MCP tools: optimize_tokens, count_tokens, etc.
-├── counter.py            # Multi-provider token counting
-├── optimizer.py          # Optimization strategies
-└── cost_estimator.py     # LLM pricing and cost calculation
-```
-
-- Plugins live under `plugins/<plugin-name>/` or separate packages.
-- Contract:
-  - Expose MCP tools with `@mcp.tool()`.
-  - Declare dependencies and minimum supported core version.
-  - Provide setup/teardown lifecycle hooks.
-  - Use typed Pydantic configuration.
-  - Handle errors gracefully (never crash core).
-  - Explicit, fail-safe loading.
-
-Standard Plugin Structure:
-```
-plugins/my-plugin/
-├── src/my_plugin/
-│   ├── __init__.py          # Exports and metadata
-│   ├── plugin.py            # Setup, teardown, metadata
-│   ├── config.py            # Pydantic configuration
-│   ├── tools.py             # MCP tool implementations
-│   └── utils.py             # Helper functions
-├── tests/                   # Plugin-specific tests
-├── pyproject.toml           # Dependencies and metadata
-└── README.md                # Plugin documentation
-```
-
-Note: Redis is not a plugin; it is a core optional backend selected via `CACHE_BACKEND`.
-
----
-
-## Feature Specifications
-
-### Feature 1: Token Optimization (Implemented)
-
-**Purpose:** Automatic token reduction and cost estimation for LLM requests
-
-**Location:** `src/token_optimization/`
-
-**Dependencies:**
-```toml
-dependencies = [
-    "tiktoken>=0.5.0",         # OpenAI token counting
-    "anthropic>=0.25.0",       # Anthropic/Claude token counting
-]
-```
-
-**MCP Tools:**
-- `optimize_tokens(content, target_reduction, model, strategies)` → optimization result
-- `count_tokens(content, model, include_breakdown)` → token count
-- `estimate_cost(content, model, operation, output_tokens)` → cost estimate
-- `analyze_token_efficiency(content, model)` → efficiency analysis
-
-**Configuration:**
-```python
-class TokenOptimizationConfig(BaseModel):
-    enabled: bool = True
-    default_reduction_target: float = 0.20  # 20% reduction
-    quality_threshold: float = 0.90
-    cache_optimizations: bool = True
-    optimization_strategies: List[str] = ["whitespace", "redundancy", "compression"]
-    max_overhead_ms: float = 100.0
-    enable_aggressive_mode: bool = False
-    preserve_code_blocks: bool = True
-    preserve_formatting: bool = True
-    cache_ttl_seconds: int = 3600
-```
-
-**Capabilities:**
-- Token counting for 15+ models across OpenAI, Anthropic, Google, Mistral
-- 5 optimization strategies with quality preservation
-- Real-time cost estimation with pricing database
-- Sub-100ms processing overhead
-- 20-50% token reduction in typical use cases
-- >90% quality preservation by default
-
-**Integration:**
-- Uses core cache for optimization pattern storage
-- Emits metrics via core observability
-- Respects feature flag: `features.token_optimization`
-
-This section defines the six major plugins that implement the AI optimization platform capabilities described in the project vision. Each plugin specification includes purpose, dependencies, MCP tools, configuration, and integration points.
-
-
-
-### Feature 2: Model Routing (Future Implementation)
-
-**Purpose:** Intelligent model selection across 15+ providers
-
-**Location:** `src/model_routing/`
-
-**Status:** Planned for future release
-
-**Planned Capabilities:**
-- Real-time cost-performance optimization
-- Support for 15+ AI models
-- Sub-25ms routing decisions
-- 40-60% cost reduction potential
-
-**Purpose:** Intelligent model selection and routing across 15+ AI providers based on cost, quality, and latency requirements.
-
-**Package Name:** `seraph-mcp-model-routing`
-
-**Location:** `plugins/model-routing/`
-
-**Core Dependencies:**
-```toml
-[project]
-dependencies = [
-    "seraph-mcp>=1.0.0",       # Core platform
-    "openai>=1.0.0",           # OpenAI models
-    "anthropic>=0.25.0",       # Anthropic/Claude models
-    "google-generativeai>=0.3.0",  # Google Gemini
-    "cohere>=4.0.0",           # Cohere models
-    "httpx>=0.25.0",           # HTTP client for API calls
-]
-```
-
-**MCP Tools Exposed:**
-- `find_best_model(task_type: str, requirements: dict) -> dict`
-  - Find optimal model for task and requirements
-  - Returns model recommendation with reasoning
-- `route_request(prompt: str, requirements: dict) -> dict`
-  - Automatically route to best model and execute
-  - Returns response with model used and cost
-- `compare_models(task_description: str, candidate_models: List[str]) -> dict`
-  - Compare multiple models for specific task
-  - Returns detailed comparison matrix
-- `get_model_pricing() -> dict`
-  - Current pricing for all supported models
-- `get_model_capabilities(model: str) -> dict`
-  - Capabilities, context window, features
-
-**Configuration Schema:**
-```python
-class ModelRoutingConfig(BaseModel):
-    enabled: bool = True
-    default_providers: List[str] = ["openai", "anthropic", "google"]
-    cost_weight: float = Field(0.4, ge=0.0, le=1.0)
-    quality_weight: float = Field(0.4, ge=0.0, le=1.0)
-    latency_weight: float = Field(0.2, ge=0.0, le=1.0)
-    max_cost_per_request: Optional[float] = None
-    cache_routing_decisions: bool = True
-    fallback_models: List[str] = ["gpt-3.5-turbo"]
-```
-
-**Supported Models (15+):**
-- OpenAI: GPT-4, GPT-4-Turbo, GPT-3.5-Turbo, GPT-3.5-Turbo-16k
-- Anthropic: Claude-3-Opus, Claude-3-Sonnet, Claude-3-Haiku, Claude-2.1
-- Google: Gemini-Pro, Gemini-Pro-Vision, PaLM-2
-- Cohere: Command, Command-Light
-- Mistral: Mistral-Large, Mistral-Medium, Mistral-Small
-
-**Integration Points:**
-- Uses core cache for pricing and routing decisions
-- Emits detailed cost/performance metrics
-- Integrates with budget plugin for cost enforcement
-
----
-
-### Feature 3: Semantic Cache ✅ IMPLEMENTED
-
-**Purpose:** Vector-based semantic similarity caching
-
-**Location:** `src/semantic_cache/`
-
-**Status:** Planned for future release
-
-**Planned Capabilities:**
-- Redis Stack or ChromaDB integration
-- Semantic similarity matching
-- Multi-level caching strategy
-
-**Purpose:** Advanced similarity-based caching using vector embeddings for semantic matching beyond exact key matches.
-
-**Package Name:** `seraph-mcp-semantic-cache`
-
-**Location:** `plugins/semantic-cache/`
-
-**Core Dependencies:**
-```toml
-[project]
-dependencies = [
-    "seraph-mcp>=1.0.0",           # Core platform
-    "chromadb>=0.4.0",             # Vector database
-    "sentence-transformers>=2.2.0", # Local embeddings
-    "numpy>=1.24.0",               # Vector operations
-    "scipy>=1.10.0",               # Similarity calculations
-]
-
-[project.optional-dependencies]
-remote-embeddings = [
-    "openai>=1.0.0",               # OpenAI embeddings API
-]
-```
-
-**Implementation Status:** ✅ Complete
-
-**Location:** `src/semantic_cache/`
-
-**Architecture:**
-- Uses existing provider system for embeddings
-- ChromaDB for persistent vector storage
-- Supports local (sentence-transformers) and API embeddings
-- Provider-agnostic: OpenAI, Ollama, LM Studio, or any OpenAI-compatible endpoint
-
-**Configuration Schema:**
-```python
-class SemanticCacheConfig(BaseModel):
-    enabled: bool = True
-
-    # Embedding provider (uses existing provider system)
-    embedding_provider: str = "local"  # or "openai", "openai-compatible"
-    embedding_model: str = "all-MiniLM-L6-v2"
-    embedding_api_key: Optional[str] = None
-    embedding_base_url: Optional[str] = None  # For Ollama/LM Studio
-
-    # Similarity search
-    similarity_threshold: float = 0.80
-    max_results: int = 10
-
-    # ChromaDB settings
-    collection_name: str = "seraph_semantic_cache"
-    persist_directory: str = "./data/chromadb"
-    max_cache_entries: int = 10000
-
-    # Performance
-    batch_size: int = 32
-    cache_embeddings: bool = True
-```
-
-**Core Features:**
-- Semantic similarity search (finds similar queries, not exact matches)
-- Multiple embedding providers via unified interface
-- Local embeddings (no API keys needed)
-- Persistent storage with ChromaDB
-- In-memory embedding cache for performance
-
-**Integration Points:**
-- Complements existing cache system
-- Uses provider system for embeddings
-- Can be queried before expensive LLM calls
-- Automatic similarity-based cache hits
-
----
-
-### Feature 4: Context Optimization ✅ IMPLEMENTED
-
-**Purpose:** Hybrid compression system combining AI-powered and deterministic multi-layer compression for optimal token reduction.
-
-**Location:** `src/context_optimization/`
-
-**Architecture: Two-Method Hybrid System**
-
-The context optimization system provides two complementary compression approaches that automatically select the best method based on content characteristics:
-
-#### Method 1: AI Compression (Fast & Nuanced)
-- **Best For**: Short prompts (≤3k tokens), one-shot use, heavy nuance preservation
-- **How It Works**:
-  1. LLM compresses text using intelligent prompt (LLMLingua approach)
-  2. Second LLM validates quality (0-1 score)
-  3. Automatic rollback if quality < threshold
-- **Performance**: Sub-100ms, 20-40% reduction, >=90% quality
-- **Strengths**: Preserves subtle constraints, cross-sentence references, semantic nuance
-- **Tradeoffs**: Requires API calls, non-deterministic, not cacheable across sessions
-
-#### Method 2: Seraph Compression (Deterministic & Cacheable)
-- **Best For**: Long prompts (>3k tokens), repeated queries, multi-session memory
-- **How It Works** (Three-Tier Pipeline):
-
-  **Tier-1 (500x-style)**: Structural compression
-  - **L1 Layer**: Ultra-small skeleton (0.2% ratio)
-    - Bullets from anchor extraction (entities, quantities, dates, URLs)
-    - Deterministic, seeded deduplication via SimHash
-  - **L2 Layer**: Compact abstracts (1% ratio)
-    - Section summaries from top-ranked chunks
-    - BM25 salience scoring with anchor density bonuses
-  - **L3 Layer**: Factual extracts (5% ratio)
-    - Top salient chunks preserving structure
-    - Extractive, no generative changes
-
-  **Tier-2 (DCP)**: Dynamic context pruning
-  - Importance + novelty + locality scoring
-  - Greedy selection under token budget
-  - Compresses L3 further (to ~8% of original)
-
-  **Tier-3 (Hierarchical)**: Query-time compression
-  - Optional LLMLingua-2 for runtime polish
-  - Falls back to internal rules if unavailable
-  - Enables query-specific layer selection
-
-- **Performance**: Sub-100ms for queries, deterministic caching
-- **Strengths**:
-  - Same input → same output (integrity-hashed)
-  - Amortized cost (build once, query many times)
-  - BM25/heuristics on CPU (no API calls per query)
-  - Failure isolation (structural pruning reduces over-aggressive abstraction)
-- **Tradeoffs**:
-  - Cold start cost (seconds for large corpora)
-  - Less nuanced than AI for small inputs
-  - Requires tuning for niche domains
-
-#### Method 3: Hybrid Mode (Best of Both)
-- **How It Works**:
-  1. Seraph pre-compresses to L2 layer (deterministic structure)
-  2. AI polishes the compressed content (semantic enhancement)
-  3. Quality validation ensures improvement
-- **Best For**: Tight budgets + quality requirements, iterative refinement
-- **Performance**: Combines determinism of Seraph with nuance of AI
-
-**Automatic Method Selection:**
-```python
-if config.compression_method == "auto":
-    if tokens <= seraph_token_threshold (default: 3000):
-        use AI compression  # Fast, nuanced for short content
-    else:
-        use Seraph compression  # Efficient, cacheable for long content
-elif config.compression_method in ["ai", "seraph", "hybrid"]:
-    use specified method
-```
-
-**Decision Matrix:**
-
-| Scenario | Tokens | Reuse | Best Method | Why |
-|----------|--------|-------|-------------|-----|
-| Chat prompt | 500 | One-shot | **AI** | Fast, preserves nuance |
-| Document summary | 10k | One-shot | **AI** | Better semantic understanding |
-| Multi-doc context | 50k | Repeated | **Seraph** | Build once, query many times |
-| Tool logs | 100k | Persistent | **Seraph** | Deterministic, cacheable |
-| Transcript compression | 20k | Query multiple times | **Seraph** | BM25 retrieval works well |
-| Code context | 5k | Evolving | **Hybrid** | Structure + semantic polish |
-| Tight budget | Any | Any | **Hybrid** | Maximize reduction, maintain quality |
-
-**Status:** Planned for future release
-
-**Purpose:** AI-powered content reduction that preserves meaning and quality while reducing token usage.
-
-**Package Name:** `seraph-mcp-context-optimization`
-
-**Location:** `plugins/context-optimization/`
-
-**Core Dependencies:**
-```toml
-[project]
-dependencies = [
-    "seraph-mcp>=1.0.0",       # Core platform with provider system
-    "anthropic>=0.25.0",       # Claude for intelligent summarization
-    "tiktoken>=0.5.0",         # Token counting
-    "scikit-learn>=1.3.0",     # Text analysis
-]
-```
-
-**Note:** Context Optimization will leverage the provider system for AI-powered summarization.
-
-**MCP Tools Exposed:**
-- `optimize_context(content: str, optimization_goal: str = "balanced") -> dict`
-  - Reduce context size while preserving meaning
-  - Goals: "aggressive", "balanced", "conservative"
-  - Returns optimized content with quality metrics
-- `analyze_content_structure(content: str) -> dict`
-  - Analyze content for optimization opportunities
-  - Returns structure analysis and recommendations
-- `preserve_key_elements(content: str, elements: List[str]) -> dict`
-  - Optimize while ensuring specific elements preserved
-- `compare_optimization_strategies(content: str) -> dict`
-  - Compare different optimization approaches
-  - Returns side-by-side comparison
-
-**Configuration Schema:**
-```python
-class ContextOptimizationConfig(BaseModel):
-    enabled: bool = True
-    default_optimization_goal: str = "balanced"
-    quality_threshold: float = Field(0.90, ge=0.0, le=1.0)
-    max_reduction_percentage: float = Field(0.40, ge=0.0, le=0.7)
-    preserve_code_blocks: bool = True
-    preserve_structured_data: bool = True
-    use_ai_summarization: bool = True
-    summarization_model: str = "claude-3-haiku-20240307"
-```
-
-**Integration Points:**
-- Uses model routing plugin for AI summarization
-- Caches optimization patterns in core cache
-- Emits quality metrics via observability
-
----
-
-### Feature 5: Budget Management ✅ IMPLEMENTED
-
-**Purpose:** Cost tracking and enforcement with free tier detection
-
-**Location:** `src/budget_management/`
-
-**Status:** ✅ Implemented and exposed as MCP tools
-
-**Purpose:** Comprehensive cost tracking, forecasting, and enforcement with free tier detection and intelligent alerts.
-
-**Package Name:** `seraph-mcp-budget-management`
-
-**Location:** `plugins/budget-management/`
-
-**Core Dependencies:**
-```toml
-[project]
-dependencies = [
-    "seraph-mcp>=1.0.0",       # Core platform
-    "sqlalchemy>=2.0.0",       # Database for cost tracking
-    "alembic>=1.12.0",         # Database migrations
-    "pandas>=2.1.0",           # Data analysis
-    "matplotlib>=3.8.0",       # Cost visualization
-]
-```
-
-**MCP Tools Exposed:**
-- `check_budget(detailed: bool = False) -> dict`
-  - Current budget status and spending
-  - Returns usage, limits, alerts, forecasts
-- `set_budget(daily_limit: float, monthly_limit: float, alert_thresholds: List[float]) -> bool`
-  - Configure budget limits and alerts
-- `get_usage_report(time_period_hours: int = 24, breakdown_by: str = "model") -> dict`
-  - Detailed usage analytics and trends
-  - Breakdowns: "model", "plugin", "user", "time"
-- `forecast_spending(days_ahead: int = 7) -> dict`
-  - Predict future spending with confidence intervals
-  - Returns forecast with recommendations
-- `detect_free_tier() -> dict`
-  - Detect and respect API free tier limits
-  - Returns free tier status per provider
-- `track_cost(operation: str, model: str, tokens: int, cost: float) -> bool`
-  - Record cost for operation (auto-called by routing plugin)
-- `get_cost_optimization_suggestions() -> dict`
-  - AI-generated cost saving recommendations
-
-**Configuration Schema:**
-```python
-class BudgetManagementConfig(BaseModel):
-    enabled: bool = True
-    daily_budget_limit: Optional[float] = None
-    monthly_budget_limit: Optional[float] = None
-    alert_thresholds: List[float] = [50.0, 75.0, 90.0]  # Percentage
-    enforce_hard_limits: bool = False  # Block requests when limit hit
-    free_tier_detection: bool = True
-    cost_tracking_database: str = "sqlite:///data/costs.db"
-    forecast_confidence_level: float = 0.95
-    alert_email: Optional[str] = None
-```
-
-**Integration Points:**
-- Receives cost data from model routing plugin
-- Uses core cache for pricing lookup
-- Emits budget alerts via observability
-- Can block requests when limits exceeded
-
----
-
-### Feature 6: Quality Preservation (Future Implementation)
-
-**Purpose:** Multi-dimensional validation with automatic rollback
-
-**Location:** `src/quality_preservation/`
-
-**Status:** Planned for future release
-
-**Purpose:** Multi-dimensional validation of optimized content with automatic rollback when quality degrades below thresholds.
-
-**Package Name:** `seraph-mcp-quality-preservation`
-
-**Location:** `plugins/quality-preservation/`
-
-**Core Dependencies:**
-```toml
-[project]
-dependencies = [
-    "seraph-mcp>=1.0.0",       # Core platform
-    "sentence-transformers>=2.2.0",  # Semantic similarity
-    "difflib",                 # Built-in text comparison
-    "scikit-learn>=1.3.0",     # Text metrics
-    "numpy>=1.24.0",           # Numerical operations
-]
-```
-
-**MCP Tools Exposed:**
-- `validate_quality(original: str, optimized: str) -> dict`
-  - Multi-dimensional quality assessment
-  - Returns quality score and detailed metrics
-- `compare_content(original: str, modified: str, dimensions: List[str]) -> dict`
-  - Compare content across multiple dimensions
-  - Dimensions: "semantic", "structure", "completeness", "accuracy"
-- `suggest_improvements(content: str, quality_issues: List[str]) -> dict`
-  - Get actionable improvement recommendations
-- `analyze_content_quality(content: str) -> dict`
-  - Comprehensive quality analysis
-  - Returns scores across all dimensions
-- `set_quality_thresholds(thresholds: dict) -> bool`
-  - Configure quality requirements per dimension
-
-**Configuration Schema:**
-```python
-class QualityPreservationConfig(BaseModel):
-    enabled: bool = True
-    semantic_similarity_threshold: float = Field(0.90, ge=0.0, le=1.0)
-    structural_similarity_threshold: float = Field(0.85, ge=0.0, le=1.0)
-    completeness_threshold: float = Field(0.90, ge=0.0, le=1.0)
-    overall_quality_threshold: float = Field(0.90, ge=0.0, le=1.0)
-    auto_rollback: bool = True  # Rollback if quality too low
-    preserve_code_blocks: bool = True
-    preserve_urls: bool = True
-    preserve_structured_data: bool = True
-    validation_timeout_ms: int = 100
-```
-
-**Validation Dimensions:**
-- **Semantic Similarity:** Meaning preservation (using embeddings)
-- **Structural Similarity:** Format and organization preservation
-- **Completeness:** All key information retained
-- **Accuracy:** Factual correctness maintained
-- **Overall Quality:** Weighted combination of all dimensions
-
-**Integration Points:**
-- Called by context optimization plugin after optimization
-- Can trigger automatic rollback to original content
-- Emits quality metrics via observability
-- Works with semantic cache for similarity calculations
-
----
-
-## Packaging & Deployment
-
-```
-┌─────────────────────────────────────────────────────┐
-│                  MCP Client                         │
-└──────────────────┬──────────────────────────────────┘
-                   │ stdio (JSON-RPC)
-┌──────────────────▼──────────────────────────────────┐
-│            Core Server (src/server.py)              │
-│  ┌────────────────────────────────────────────────┐ │
-│  │  Core Tools: cache, status, metrics            │ │
-│  └────────────────────────────────────────────────┘ │
-│  ┌────────────────────────────────────────────────┐ │
-│  │  Cache Factory (Memory/Redis)                  │ │
-│  └────────────────────────────────────────────────┘ │
-│  ┌────────────────────────────────────────────────┐ │
-│  │  Observability Adapter                         │ │
-│  └────────────────────────────────────────────────┘ │
-└──────────────────┬──────────────────────────────────┘
-                   │ Plugin Integration
-┌──────────────────▼──────────────────────────────────┐
-│                 AI Optimization Plugins              │
-│  ┌──────────────┐  ┌─────────────┐  ┌─────────────┐│
-│  │ Token Opt.   │  │ Model Route │  │ Semantic    ││
-│  │              │◄─┤             │─►│ Cache       ││
-│  └──────┬───────┘  └──────┬──────┘  └──────┬──────┘│
-│         │                 │                 │       │
-│  ┌──────▼───────┐  ┌─────▼──────┐  ┌──────▼──────┐│
-│  │ Context Opt. │  │ Budget     │  │ Quality     ││
-│  │              │◄─┤ Management │─►│ Preserv.    ││
-│  └──────────────┘  └────────────┘  └─────────────┘│
-└─────────────────────────────────────────────────────┘
-
-Plugin Communication:
-- All plugins can use core cache
-- All plugins emit to core observability
-- Plugins can call other plugins' tools via MCP
-- Budget plugin receives cost data from routing plugin
-- Quality plugin validates context optimization output
-- Semantic cache works alongside core cache
-```
-
----
-
-## Installation & Configuration
-
-### Installation
-
-**Method 1: pip install**
-```bash
-# Install individual plugins
-pip install seraph-mcp-model-routing
-pip install seraph-mcp-semantic-cache
-
-# Install all plugins
-pip install seraph-mcp[all-plugins]
-```
-
-**Method 2: uv sync**
-```toml
-# pyproject.toml
-```bash
-# Standard installation (includes all features)
-pip install seraph-mcp
-
-# Or via npm for MCP usage
-npx -y seraph-mcp
-```
-
-**Optional Dependencies:**
-```toml
-[project.optional-dependencies]
-# Heavy dependencies for advanced features
-embeddings = [
-    "sentence-transformers>=2.0.0",  # Local embeddings
-    "chromadb>=0.4.0",               # Vector database
-]
-
-# All optional features
-all = [
-    "sentence-transformers>=2.0.0",
-    "chromadb>=0.4.0",
-]
-```
-
-### Configuration File
-
+### 2. Complete get_optimization_stats Implementation
+
+**Current State**: ✅ Phase 2 Complete - Comprehensive statistics implemented
+
+**Implementation Complete**:
+- ✅ Optimizer instance stored in `_context_optimizer["instance"]`
+- ✅ Rolling window: `deque(maxlen=100)` tracks last 100 optimization snapshots
+- ✅ Cache hit tracking: `cache_hits`, `cache_misses` counters
+- ✅ Enhanced `get_stats()` returns comprehensive metrics:
+  - Lifetime stats: total_optimizations, success_rate, avg_quality_score, avg_reduction_percentage, total_tokens_saved
+  - Method breakdown: ai, seraph, hybrid usage counts
+  - Cache metrics: cache_size, cache_hit_rate, seraph_cache_size
+  - Rolling window aggregates: avg_quality, avg_tokens_saved, success_rate (last 100)
+  - Percentiles: p50_ms, p95_ms, p99_ms processing times
+- ✅ Tool `get_optimization_stats()` calls optimizer.get_stats() instead of placeholder
+- ✅ Lightweight snapshots: only essential fields stored in rolling window
+
+**Response Schema**:
 ```json
-// fastmcp.json
 {
-  "name": "Seraph MCP with AI Optimization",
-  "version": "1.0.0",
-  "core": {
-    "cache_backend": "redis",
-    "redis_url": "redis://localhost:6379/0"
+  "success": true,
+  "optimizer_initialized": true,
+  "total_optimizations": 150,
+  "successful_optimizations": 142,
+  "success_rate": 0.947,
+  "avg_quality_score": 0.91,
+  "avg_reduction_percentage": 28.5,
+  "total_tokens_saved": 42500,
+  "method_usage": {"ai": 45, "seraph": 89, "hybrid": 8},
+  "cache_size": 128,
+  "cache_hits": 23,
+  "cache_misses": 127,
+  "cache_hit_rate": 0.153,
+  "seraph_cache_size": 89,
+  "rolling_window": {
+    "count": 100,
+    "avg_quality": 0.92,
+    "avg_tokens_saved": 285,
+    "success_rate": 0.96,
+    "avg_processing_ms": 45.2
   },
-  "plugins": {
-    "token_optimization": {
-      "enabled": true,
-      "default_reduction_target": 0.20
-    },
-    "model_routing": {
-      "enabled": true,
-      "default_providers": ["openai", "anthropic", "google"],
-      "max_cost_per_request": 0.10
-    },
-    "semantic_cache": {
-      "enabled": true,
-      "embedding_model": "all-MiniLM-L6-v2",
-      "similarity_threshold": 0.85
-    },
-    "context_optimization": {
-      "enabled": true,
-      "compression_method": "auto",
-      "seraph_token_threshold": 3000,
-      "quality_threshold": 0.90,
-      "max_overhead_ms": 100.0,
-      "seraph_l1_ratio": 0.002,
-      "seraph_l2_ratio": 0.01,
-      "seraph_l3_ratio": 0.05
-      "quality_threshold": 0.90
-    },
-    "budget_management": {
-      "enabled": true,
-      "daily_budget_limit": 10.0,
-      "monthly_budget_limit": 200.0,
-      "alert_thresholds": [50, 75, 90]
-    },
-    "quality_preservation": {
-      "enabled": true,
-      "overall_quality_threshold": 0.90,
-      "auto_rollback": true
-    }
+  "percentiles": {
+    "p50_ms": 38.5,
+    "p95_ms": 89.2,
+    "p99_ms": 124.8
   }
 }
 ```
 
----
-
-## Governance & Mandatory Rules
-
-### Code Organization
-1. All features in `src/<feature_name>/` (not separate packages)
-2. Feature flags in `src/config/schemas.py`
-3. Tools registered in `src/server.py`
-4. Shared dependencies in main `pyproject.toml`
-
-### Development Rules
-
-1. Minimal core: Only features required by the canonical runtime belong in core.
-2. Single adapter rule:
-   - Cache factory: `src/cache/factory.py`
-   - Observability adapter: `src/observability/*`
-3. Dependencies:
-   - Keep core lean; Redis is allowed as a core optional backend (toggle).
-   - Heavy or niche dependencies should be delivered via plugins.
-4. Tests required for all core changes.
-5. No examples/dev-only files in `src/`.
-6. Configuration must be typed and validated at startup.
-7. Long-running tasks must be cancellable and time-bounded.
-8. Secrets never in source; CI-enforced.
-9. Observability required for every MCP tool (invocation, latency, errors).
-10. Deprecations must be behind explicit feature flags for one release cycle maximum.
-11. MCP stdio only in core; any HTTP servers must live in plugins.
-
-Enforcement:
-- CI gates described above.
-- Branch protections and CODEOWNERS for `src/`.
+**Implementation Notes**:
+- Location: `src/context_optimization/optimizer.py` (ContextOptimizer class)
+- Location: `src/server.py` (_init_context_optimization_if_available, get_optimization_stats tool)
+- Rolling window uses deque for O(1) operations, bounded memory (maxlen=100)
+- Percentiles calculated on-demand from sorted processing times (negligible overhead for 100 items)
+- Cache hit rate = cache_hits / (cache_hits + cache_misses)
 
 ---
 
-## Migration & Recovery Plan
+### 3. Semantic Cache Size Management and Eviction
 
-- Maintain a `recovery/` branch for archived or plugin-candidate code for one release cycle.
-- Reintroduce features as plugins with integration tests.
-- Rollback via redeploying previous tags.
+**Current State**: ✅ Phase 3 Complete - Multi-layer LRU+FIFO eviction implemented
 
----
+**Implementation Complete**:
+- ✅ Multi-layer cache architecture: LRU (hot tier) + FIFO (cold tier) using `cachetools`
+- ✅ Automatic eviction at high watermark threshold (default: 90% capacity)
+- ✅ Promotion: FIFO entries promoted to LRU on re-access before eviction
+- ✅ Optional TTL support (disabled by default, `entry_ttl_seconds=0`)
+- ✅ Batch ChromaDB deletes via eviction queue for efficiency
+- ✅ Comprehensive statistics: hits, misses, evictions, promotions, hit_rate, utilization_pct
+- ✅ O(1) cache operations with <5ms overhead target
+- ✅ All MCP tools have input validation via Pydantic schemas
 
-## Release & Versioning
-
-- Semantic versioning: `MAJOR.MINOR.PATCH` for core.
-- Plugins declare `core_version_range` for compatibility.
-- Release checklist:
-  - CI green
-  - Updated changelog
-  - Release notes (including deprecations)
-
----
-
-## File Layout (Monolithic Architecture)
-
+**Architecture**:
 ```
-seraph-mcp/
-├── src/                          # Source code
-│   ├── server.py                 # FastMCP stdio server (ONLY entrypoint)
-│   ├── config/                   # Configuration management
-│   │   ├── schemas.py            # Pydantic v2 models with ConfigDict
-│   │   ├── loader.py             # Config loading
-│   │   └── __init__.py           # Exports
-│   ├── cache/                    # Caching system
-│   │   ├── factory.py            # Cache factory (memory/Redis)
-│   │   ├── interface.py          # Cache interface
-│   │   └── backends/
-│   │       ├── memory.py         # Memory backend
-│   │       └── redis.py          # Redis backend (uses aclose())
-│   ├── context_optimization/     # Compression system
-│   │   ├── optimizer.py          # Hybrid optimizer
-│   │   ├── seraph_compression.py # 3-tier deterministic compression
-│   │   ├── config.py             # Optimization config
-│   │   └── models.py             # Result models
-│   ├── providers/                # AI provider integrations
-│   │   ├── base.py               # Provider interface
-│   │   ├── openai.py             # OpenAI provider
-│   │   ├── anthropic.py          # Anthropic provider
-│   │   └── google_ai.py          # Google Gemini provider
-│   ├── budget_management/        # Cost tracking
-│   │   ├── tracker.py            # Budget tracker
-│   │   └── config.py             # Budget config
-│   ├── observability/            # Monitoring and logging
-│   │   └── monitoring.py         # Observability adapter
-│   └── errors.py                 # Error types
-│
-├── tests/                        # Test suite (71 passing, 29 skipped)
-│   ├── conftest.py               # Shared fixtures
-│   ├── unit/                     # Unit tests
-│   │   ├── cache/                # Cache backend tests
-│   │   ├── config/               # Config tests
-│   │   └── context_optimization/ # Compression tests (32 tests)
-│   └── integration/              # Integration tests
-│       └── test_cache_factory.py
-│
-├── docker/                       # Docker infrastructure
-│   ├── Dockerfile                # Application container
-│   ├── docker-compose.yml        # Production Redis
-│   ├── docker-compose.dev.yml    # Development Redis
-│   ├── .dockerignore             # Build exclusions
-│   └── README.md                 # Docker documentation
-│
-├── docs/                         # Documentation
-│   ├── SDD.md                    # System Design Document (this file)
-│   ├── TESTING.md                # Testing guide
-│   ├── PROVIDERS.md              # Provider integration guide
-│   ├── CONFIG_AUDIT_2025.md      # Configuration audit report
-│   ├── redis/
-│   │   └── REDIS_SETUP.md        # Redis configuration
-│   └── publishing/
-│       └── PUBLISH_TO_PYPI.md    # Publishing guide
-│
-├── examples/                     # Usage examples
-├── scripts/                      # Utility scripts
-│   └── setup-pre-commit.sh       # Pre-commit hook setup
-│
-├── .github/workflows/            # CI/CD pipelines
-│   ├── ci.yml                    # Main CI pipeline
-│   └── pre-commit.yml            # Pre-commit checks
-│
-├── fastmcp.json                  # FastMCP dev configuration
-├── prod.fastmcp.json             # FastMCP prod configuration
-├── pyproject.toml                # Python package configuration
-├── .python-version               # Python 3.12
-├── .pre-commit-config.yaml       # Pre-commit hooks
-├── .gitignore                    # Git exclusions
-├── README.md                     # Main documentation
-├── CONTRIBUTING.md               # Contribution guide
-├── LICENSE                       # MIT License
-└── .env.example                  # Environment template
+Query → LRU (hot) → hit ✓
+          ↓ miss
+       FIFO (cold) → hit → promote to LRU
+          ↓ miss
+      ChromaDB lookup → store in LRU
 ```
 
-### Recent Structural Improvements (January 2025)
+**Config Parameters** (`src/semantic_cache/config.py`):
+- `lru_cache_size`: Hot tier size (default: 1000, 10% of capacity)
+- `fifo_cache_size`: Cold tier size (default: 9000, 90% of capacity)</parameter>
+- `entry_ttl_seconds`: Time-to-live (default: 0 = disabled, recommended)
+- `high_watermark_pct`: Cleanup trigger (default: 90%)
+- `cleanup_batch_size`: Entries per cleanup (default: 100)
 
-**Configuration Modernization:**
-- ✅ Migrated all Pydantic models from v1 `class Config:` to v2 `ConfigDict`
-- ✅ Aligned all dependency versions across `pyproject.toml`, `fastmcp.json`, `prod.fastmcp.json`
-- ✅ Fixed ruff target-version: `py310` → `py312`
-- ✅ Added all missing provider dependencies to FastMCP configs
+**Statistics Exposed** (`get_stats()` via `multi_layer_cache`):
+- `hits`, `misses`, `hit_rate`: Cache performance
+- `lru_hits`, `fifo_hits`, `chromadb_hits`: Per-tier breakdown
+- `evictions`, `promotions`: Eviction behavior
+- `lru_entries`, `fifo_entries`, `total_entries`: Capacity tracking
+- `utilization_pct`: Cache fullness percentage
+- `oldest_entry_age_sec`: Age of oldest entry
+- `eviction_queue_size`: Pending ChromaDB deletes
 
-**Code Quality:**
-- ✅ Zero Pydantic deprecation warnings
-- ✅ Zero pytest fixture warnings
-- ✅ Updated Redis backend to use `aclose()` instead of deprecated `close()`
-- ✅ Clean test build: 71 passed, 29 skipped, 0 warnings
+**Implementation Files**:
+- `src/semantic_cache/eviction.py`: MultiLayerCache class with LRU+FIFO logic
+- `src/semantic_cache/cache.py`: SemanticCache integration with multi-layer cache
+- `src/semantic_cache/config.py`: Configuration schema with eviction parameters
+- `src/validation/tool_schemas.py`: Input validation for all 18 MCP tools
+- `src/validation/decorators.py`: @validate_input decorator
+- `src/server.py`: All tools decorated with validation
 
-**Documentation Cleanup:**
-- ✅ Removed outdated completion/fix documents from June 2024
-- ✅ Organized all Docker files into `docker/` directory
-- ✅ Created comprehensive configuration audit report
+**Performance**:
+- O(1) get/set operations via cachetools
+- Batch ChromaDB deletes minimize database overhead
+- Automatic cleanup at high watermark prevents unbounded growth
+- TTL disabled by default following semantic cache best practices
 
-**Test Suite:**
-- ✅ 32 SeraphCompressor tests rewritten to match new API (`build()`, `query()`, `pack()`)
-- ✅ All tests use modern Pydantic v2 patterns
-- ✅ Comprehensive coverage of 3-tier compression system
+**Cache Size Tuning** (P0 Phase 3 - Q3 Optimization):
+- **Research**: Based on S3-FIFO paper (USENIX HotStorage 2023) and production benchmarks
+- **Optimal ratio**: 10% LRU (hot) + 90% FIFO (cold) achieves 95% hit rate for most workloads
+- **Rationale**:
+  - Small hot tier (10%) captures frequently reused items with lazy promotion
+  - Large cold tier (90%) provides quick demotion for one-hit wonders
+  - FIFO in cold tier is faster than LRU (no pointer updates on cache hit)
+  - Promotion only at eviction time reduces overhead
+- **Total capacity**: 10,000 entries (1K hot + 9K cold) balances memory usage and hit rate
+- **Source**: "FIFO is Better than LRU" (s3fifo.com), production data from Redis, NGINX, ChromaDB deployments</parameter>
+
+---
+
+## P1 - Important for Operational Excellence
+
+### 5. Budget Webhook Alert System
+
+**Current State**: webhook_url and webhook_enabled config fields exist but no implementation.
+Location: `src/budget_management/config.py`
+
+**Gaps**:
+- No webhook notification sending logic
+- No alert payload formatting
+- No retry logic for failed webhooks
+- No webhook signature/authentication
+
+**Acceptance Criteria**:
+- [ ] Implement send_webhook_alert() in tracker or enforcer
+- [ ] Trigger webhooks when budget thresholds exceeded
+- [ ] Include payload: alert_type, threshold, current_spend, budget_limit, timestamp
+- [ ] Implement retry logic with exponential backoff (3 attempts)
+- [ ] Support webhook signature (HMAC-SHA256) if secret configured
+- [ ] Log webhook delivery success/failure
+- [ ] Add webhook testing tool
+
+**Implementation Notes**:
+- Use aiohttp for async webhook delivery
+- Format payload as JSON with consistent schema
+- Consider supporting multiple webhook URLs for redundancy
 
 ---
 
-## Operational Playbooks
+### 6. Enhanced Budget Forecasting with Confidence Intervals
 
-- Incident response:
-  1. Increase log verbosity (if safe).
-  2. Inspect metrics via `get_metrics()` and `get_cache_stats()`.
-  3. Validate cache connectivity (Redis ping in stats).
-  4. Roll back to last green tag if persistent.
-- Deploy:
-  - Run CI → tag release → test via MCP client → rollout.
-- Emergency rollback:
-  - Re-deploy previous green tag.
+**Current State**: Simple linear projection exists in analytics.py
+Location: `src/budget_management/analytics.py`
+
+**Gaps**:
+- No confidence intervals on forecasts
+- No seasonal pattern detection
+- No anomaly detection in spending patterns
+- Limited to simple linear regression
+
+**Best Practices** (from budget forecasting research):
+- Use time-series analysis with seasonal decomposition
+- Calculate confidence intervals (95%) using standard error
+- Detect anomalies (spending spikes) using statistical methods
+- Support multiple forecast horizons (7d, 30d, 90d)
+
+**Acceptance Criteria**:
+- [ ] Add confidence_interval field to forecast responses (upper/lower bounds)
+- [ ] Implement seasonal decomposition (weekly/monthly patterns)
+- [ ] Add anomaly detection with configurable sensitivity
+- [ ] Support multi-horizon forecasts (7d, 30d, 90d)
+- [ ] Include trend direction indicator (increasing/decreasing/stable)
+- [ ] Add forecast accuracy metrics (compare past forecasts to actuals)
+
+**Implementation Notes**:
+- Consider using statsmodels for time-series analysis
+- Implement simple moving average as baseline
+- Calculate prediction intervals using standard deviation of residuals
+
+---
+
+### 7. Cost Optimization Recommendations
+
+**Current State**: Budget tracking exists but no optimization suggestions.
+
+**Gaps**:
+- No provider efficiency comparison
+- No model cost/quality recommendations
+- No identification of expensive queries
+- No caching opportunity detection
+
+**Acceptance Criteria**:
+- [ ] Analyze provider/model cost per 1K tokens
+- [ ] Identify most expensive queries (by tokens, cost)
+- [ ] Suggest cheaper models for similar quality
+- [ ] Detect cacheable query patterns (high repetition)
+- [ ] Recommend context optimization for token-heavy queries
+- [ ] Generate weekly cost optimization report
+
+**Implementation Notes**:
+- Add get_optimization_recommendations() to BudgetAnalytics
+- Use Models.dev API for current pricing data
+- Calculate cost efficiency metrics (cost per successful request)
 
 ---
 
-## Appendix — Implementation Checklist
+### 8. Semantic Cache Namespace Support
 
-### Core Implementation (Complete ✅)
-1. ✅ MCP stdio server and tools
-2. ✅ Typed Pydantic v2 config with ConfigDict (migrated January 2025)
-3. ✅ Cache factory + memory backend + Redis backend (with aclose())
-4. ✅ Observability adapter with structured logs
-5. ✅ Configuration alignment across all config files
-6. ✅ Clean test suite with zero deprecation warnings
-5. ✅ Standardized error types
-6. ✅ Redis backend implemented as core optional; toggle via `CACHE_BACKEND`
-7. ✅ Minimal tests for Redis backend (unit + integration)
-8. ✅ `.env.example` updated with Redis toggle and variables
-9. ✅ Plugin developer guide in `docs/PLUGIN_GUIDE.md`
-10. ✅ CI enhancements: coverage gates, secret scanning, dependency checks
+**Current State**: clear() method has namespace parameter but marked "not implemented yet"
+Location: `src/semantic_cache/cache.py` line 286
 
-### Feature Implementation
+**Gaps**:
+- No namespace-based cache organization
+- Can't selectively clear by namespace
+- No multi-tenant isolation
 
-**Token Optimization (✅ Complete):**
-- [x] Token counter with multi-provider support
-- [x] Token optimizer with 5 strategies
-- [x] Cost estimator with pricing database
-- [x] MCP tools integration
-- [x] Feature flag support
-- [x] Configuration schema
-- [x] Documentation
+**Acceptance Criteria**:
+- [ ] Add namespace field to metadata on all cache entries
+- [ ] Support namespace parameter in get(), set(), search()
+- [ ] Implement namespace filtering in clear()
+- [ ] Add get_stats(namespace) for per-namespace metrics
+- [ ] Update ChromaDB queries to filter by namespace
+- [ ] Document namespace usage patterns
 
-**AI Model Providers (✅ Complete):**
-- [x] Dynamic model loading via Models.dev API (750+ models, 50+ providers)
-- [x] OpenAI provider (GPT-4, GPT-3.5-Turbo, etc.)
-- [x] Anthropic provider (Claude 3/4 models)
-- [x] Google Gemini provider (using google-genai SDK)
-- [x] OpenAI-compatible provider (custom endpoints, auto-discovery)
-- [x] Real-time pricing integration (per-million token costs)
-- [x] Unified provider interface
-- [x] Provider factory and management
-- [x] Comprehensive documentation (docs/PROVIDERS.md)
-
-**Semantic Cache System (✅ Complete):**
-- [x] ChromaDB integration for vector storage
-- [x] Provider system for embeddings (OpenAI, Ollama, LM Studio, local)
-- [x] Local embeddings via sentence-transformers (default, no API keys)
-- [x] Semantic similarity search with configurable thresholds
-- [x] Automatic cache hits based on semantic similarity
-- [x] Minimal, functional implementation
-- [x] Configuration schema
-- [x] MCP tools integration (5 tools: lookup, store, search, stats, clear)
-- [x] Auto-enabling via environment detection
-
-**Budget Management System (✅ Complete):**
-- [x] SQLite-based cost tracking (zero external dependencies)
-- [x] Real-time cost tracking per API call
-- [x] Daily/weekly/monthly budget limits
-- [x] Soft (warning) and hard (blocking) enforcement modes
-- [x] Multi-threshold alerts (50%, 75%, 90%)
-- [x] Simple linear forecasting (no ML dependencies)
-- [x] Spending analytics by provider, model, time period
-- [x] Optional webhook notifications
-- [x] Minimal implementation (~1000 lines total)
-- [x] MCP tools integration (3 tools: check_budget, usage_report, forecast_spending)
-- [x] Auto-enabling and graceful degradation
-
-**Future Features (📋 Planned):**
-1. ✅ Context Optimization System (COMPLETED)
-   - ✅ Hybrid compression (AI + Seraph)
-   - ✅ Automatic method selection
-   - ✅ Multi-layer deterministic compression (L1/L2/L3)
-   - ✅ BM25 salience scoring
-   - ✅ Quality validation with auto-rollback
-   - ✅ Budget integration
-   - ✅ Sub-100ms performance
-   - ✅ Configurable compression strategies
-   - ✅ MCP tools integration (3 tools: optimize_context, settings, stats)
-2. ⬜ Model Routing System
-   - Intelligent provider selection
-   - Cost-performance optimization
-   - Real-time pricing integration
-   - Quality-based routing decisions
-3. ⬜ Quality Preservation Plugin
-   - Multi-dimensional validation
-   - Semantic similarity calculation
-   - Automatic rollback mechanism
-   - Quality metrics dashboard
-
-### Documentation Updates (Current)
-1. ✅ SDD.md updated with plugin specifications
-2. ⬜ Individual plugin README.md files
-3. ⬜ Plugin integration examples
-4. ⬜ End-to-end workflow documentation
-5. ⬜ Performance benchmarks and optimization guides
+**Implementation Notes**:
+- Store namespace in entry metadata
+- Use ChromaDB where clause for namespace filtering
+- Default namespace to "default" if not specified
 
 ---
+
+## P2 - Nice to Have / Future Enhancements
+
+### 9. OpenTelemetry Integration for Observability (Deferred)
+
+**Current State**: Basic in-memory metrics with "simple" backend only.
+
+**Scope**: Deferred to future release - too broad for current scope.
+
+**Future Considerations**:
+- Distributed tracing with span creation
+- W3C Trace Context propagation across tool calls
+- OTLP (OpenTelemetry Protocol) export
+- Integration with production observability backends (Grafana, AWS X-Ray, Langfuse)
+- Per-tool latency tracking (p50, p95, p99)
+- Error rate metrics by tool/provider
+
+---
+
+### 10. Context Optimization Feedback Persistence
+
+**Current State**: Feedback stored in memory only. TODO at line 621 in optimizer.py
+
+**Gaps**:
+- No persistent storage for feedback
+- Can't learn from historical feedback
+- No quality improvement tracking over time
+
+**Acceptance Criteria**:
+- [ ] Store feedback in SQLite database (./data/optimization_feedback.db)
+- [ ] Schema: id, timestamp, method, tokens_saved, quality_score, user_rating
+- [ ] Implement get_feedback_stats() for analysis
+- [ ] Track quality trends over time per method
+- [ ] Use feedback to auto-tune compression thresholds (optional)
+
+---
+
+### 11. Quality Preservation Feature (Scope Definition Required)
+
+**Current State**: Feature flag exists in config but no implementation or specification.
+Location: `src/config/schemas.py` - quality_preservation flag
+
+**Status**: Blocked pending scope definition
+
+**Questions to Answer**:
+- What does "quality preservation" mean in this context?
+- Is it related to optimization quality thresholds?
+- Is it a separate feature or part of context optimization?
+- What metrics define "quality"?
+
+**Next Steps**:
+- Define feature scope and requirements
+- Document intended behavior in SDD
+- Either implement or remove placeholder flag
+
+---
+
+## Monitoring and Maintenance
+
+### Recommended Production Practices
+
+**Performance Monitoring**:
+- Track p50, p95, p99 latencies for all tools
+- Monitor cache hit rates (semantic and optimization)
+- Alert on error rate spikes (>5% failure rate)
+- Track cost per request trends
+
+**Operational Health**:
+- Regular ChromaDB collection maintenance (reindex, vacuum)
+- Budget database cleanup (archive old records)
+- Log rotation and aggregation
+- Provider health check dashboard
+
+**Security and Compliance**:
+- Audit trail for budget alerts and enforcement actions
+- API key rotation procedures
+- Rate limiting per client/user
+- PII handling in cache and logs
+
+---
+
+## Implementation Priority Summary
+
+**✅ P0 Complete - Production Reliability Achieved**:
+1. ✅ **Error handling and validation**:
+   - Phase 1a: ErrorCode enum, CircuitBreakerError, retry module, validation schemas
+   - Phase 1b: @validate_input decorator on all 18 tools
+   - Phase 1c: ResilientProvider with retry + circuit breaker integration
+2. ✅ **get_optimization_stats completion**: Rolling window (deque), cache hit tracking, percentiles (p50/p95/p99)
+3. ✅ **Semantic cache eviction**: Multi-layer LRU+FIFO (10:90 ratio) with cachetools, batch ChromaDB deletes, TTL support (disabled by default)
+
+**Status**: All P0 items complete. Platform is production-ready with:
+- Robust error handling: Circuit breaker prevents cascading failures, retry handles transient errors
+- Comprehensive statistics: Optimization metrics, cache hit rates, percentiles
+- Bounded cache growth: 10K entry capacity with automatic eviction
+- Input validation: All 18 tools enforce strict type and constraint validation
+- Graceful degradation: Optional features fail safely without affecting core functionality</parameter>
+
+**Next Steps (P1)**: Enhance operational capabilities
+5. Budget webhook alerts
+6. Enhanced forecasting
+7. Cost optimization recommendations
+8. Namespace support for cache
+
+**Long-term (P2)**: Advanced features
+9. OpenTelemetry integration (deferred)
+10. Feedback persistence and learning
+11. Quality preservation (pending scope)
+
+---
+
+**Target Outcome**: Production-ready P0 completion with zero breaking changes, resilient error handling under load, accurate statistics reporting, and bounded cache growth with performance degradation under 5ms per operation.
+
+End of SDD.

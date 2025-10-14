@@ -206,7 +206,7 @@ class GeminiProvider(BaseProvider):
             # Generate content
             response = await self.client.aio.models.generate_content(
                 model=request.model,
-                contents=contents,  # type: ignore[arg-type]
+                contents=contents,
                 config=config,
             )
 

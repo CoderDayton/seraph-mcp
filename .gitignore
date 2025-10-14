@@ -293,8 +293,9 @@ staging_data/
 .secrets
 .private_keys
 
-# Benchmark and profiling data
-benchmarks/
+# Benchmark and profiling data (allow folder, ignore results)
+benchmarks/*.json
+benchmarks/*_results.*
 profiling_results/
 performance_snapshots/
 
@@ -326,3 +327,4 @@ pnpm-lock.yaml
 .claude/
 CLAUDE.md
 .ruff_cache/
+AGENTS.md

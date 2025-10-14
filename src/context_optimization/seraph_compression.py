@@ -9,10 +9,10 @@ Tier-1  (500x-style): deterministic structural compressor that builds L1/L2/L3 l
 Tier-2  (LLM-DCP-inspired): dynamic context pruning that greedily selects spans
         under a token budget using importance + novelty + locality scores.
 
-Tier-3  (Hierarchical): LLMLingua-2 + LangChain contextual compression
-        for query-time layered retrieval with graceful fallback.
+Tier-3  (Hierarchical): LLMLingua-2 PromptCompressor for query-time
+        layered retrieval with graceful fallback.
 
-Required dependencies: tiktoken, blake3, llmlingua, langchain
+Required dependencies: tiktoken, blake3, llmlingua
 Optional dependencies: sentence_transformers (for semantic embeddings)
 
 Author: Seraph MCP
@@ -21,6 +21,7 @@ License: MIT
 
 from __future__ import annotations
 
+import asyncio
 import gzip
 import hashlib
 import itertools as it
@@ -30,8 +31,10 @@ import math
 import random
 import re
 from collections import Counter, defaultdict
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
+from types import ModuleType
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -46,7 +49,7 @@ except ImportError as e:
         "Required dependency 'tiktoken' is missing. Install with: pip install tiktoken>=0.5.0",
         extra={"package": "tiktoken", "error": str(e)},
     )
-    tiktoken = None  # type: ignore[assignment]
+    tiktoken: ModuleType | None = None  # type: ignore[no-redef]
     _HAS_TIKTOKEN = False
 
 try:
@@ -58,11 +61,12 @@ except ImportError as e:
         "Required dependency 'blake3' is missing. Install with: pip install blake3>=1.0.7",
         extra={"package": "blake3", "error": str(e)},
     )
-    blake3 = None  # type: ignore[assignment]
+    blake3: ModuleType | None = None  # type: ignore[no-redef]
     _HAS_BLAKE3 = False
 
 try:
-    from llmlingua import LLMLingua  # type: ignore[import-untyped]
+    # LLMLingua v2 exposes a single class: PromptCompressor
+    from llmlingua import PromptCompressor
 
     _HAS_LLMLINGUA = True
 except ImportError as e:
@@ -70,31 +74,18 @@ except ImportError as e:
         "Required dependency 'llmlingua' is missing. Install with: pip install llmlingua>=0.2.2",
         extra={"package": "llmlingua", "error": str(e)},
     )
-    LLMLingua = None
+    PromptCompressor = None
     _HAS_LLMLINGUA = False
-
-try:
-    # LangChain contextual compression - verify basic import works
-    import langchain  # noqa: F401
-
-    _HAS_LANGCHAIN = True
-except ImportError as e:
-    logger.error(
-        "Required dependency 'langchain' is missing. Install with: pip install langchain>=0.3.27",
-        extra={"package": "langchain", "error": str(e)},
-    )
-    _HAS_LANGCHAIN = False
 
 # ---------- Optional dependencies -------------------------------------------------
 try:
-    from sentence_transformers import SentenceTransformer
-    from sentence_transformers import util as st_util
+    from .embeddings import cosine_similarity
 
     _HAS_EMBED = True
 except ImportError:
-    logger.debug("Optional dependency 'sentence_transformers' not available. Semantic features disabled.")
-    SentenceTransformer = None  # type: ignore[assignment, misc]
-    st_util = None  # type: ignore[assignment]
+    logger.debug("Embedding service not available. Semantic features disabled.")
+    EmbeddingService = None
+    cosine_similarity: Callable[..., float] | None = None  # type: ignore[no-redef]
     _HAS_EMBED = False
 
 # ---------- Tokenization utilities ----------------------------------------------
@@ -435,23 +426,19 @@ class Tier2DCP:
     - Scores: importance (BM25 IDF sum), novelty (1 - overlap with selected),
       locality (keep neighbors of chosen high-importance sentences).
     - Greedy selection under a token budget.
-    Optionally uses sentence embeddings if sentence_transformers is available.
+    Optionally uses API-based embeddings for semantic similarity.
     """
 
     def __init__(
         self,
         budget_ratio: float = 0.15,
         neighbor_bonus: float = 0.1,
-        use_embeddings: bool = True,
+        embedding_service: Any = None,
     ):
         self.budget_ratio = budget_ratio
         self.neighbor_bonus = neighbor_bonus
-        self.use_embeddings = use_embeddings and _HAS_EMBED
-        self._embed: SentenceTransformer | None
-        if self.use_embeddings and SentenceTransformer is not None:
-            self._embed = SentenceTransformer("all-MiniLM-L6-v2")
-        else:
-            self._embed = None
+        self.embedding_service = embedding_service
+        self.use_embeddings = embedding_service is not None
 
     def split_sentences(self, text: str) -> list[str]:
         parts = re.split(r"(?<=[.!?])\s+", text.strip())
@@ -466,9 +453,9 @@ class Tier2DCP:
         return [bm.score(q, i) for i in range(len(sentences))]
 
     def novelty(self, chosen_embeds: list[Any], cand_embed: Any, cand_tokens: set[Any]) -> float:
-        if chosen_embeds and cand_embed is not None and st_util is not None:
+        if chosen_embeds and cand_embed is not None and cosine_similarity is not None:
             # 1 - max cosine similarity
-            sims = [float(st_util.cos_sim(cand_embed, e)) for e in chosen_embeds]
+            sims = [cosine_similarity(cand_embed, e) for e in chosen_embeds]
             novelty_sim = 1.0 - max(sims)
         else:
             # token-level Jaccard penalty
@@ -477,7 +464,7 @@ class Tier2DCP:
             novelty_sim = 1.0  # neutral if nothing
         return max(0.0, novelty_sim)
 
-    def compress(self, text: str, max_tokens: int | None = None) -> str:
+    async def compress(self, text: str, max_tokens: int | None = None) -> str:
         sents = self.split_sentences(text)
         if not sents:
             return ""
@@ -486,7 +473,16 @@ class Tier2DCP:
         budget = max_tokens if max_tokens is not None else max(256, int(total * self.budget_ratio))
 
         imp = self.importance_scores(sents)
-        embeds = self._embed.encode(sents, convert_to_tensor=True) if (self.use_embeddings and self._embed) else None
+
+        # Generate embeddings via API if service available
+        embeds = None
+        if self.use_embeddings and self.embedding_service:
+            try:
+                embeds = await self.embedding_service.embed_texts(sents)
+            except Exception as e:
+                logger.warning(f"Embedding generation failed, continuing without: {e}")
+                embeds = None
+
         chosen: list[int] = []
         chosen_embeds: list[Any] = []
         used = 0
@@ -521,25 +517,31 @@ class Tier2DCP:
         return " ".join(sents[i] for i in chosen)
 
 
-# ---------- Tier-3: Hierarchical compressor (LLMLingua-2 + LangChain) -----------
+# ---------- Tier-3: Hierarchical compressor (LLMLingua-2) -----------
 
 
 class Tier3Hierarchical:
     """
     Hierarchical query-time compressor.
-    - If LLMLingua-2 is installed, uses its ratio-based compression for L1/L2/L3.
-    - If LangChain is installed, exposes a retriever with ContextualCompressionRetriever.
-    - Otherwise, falls back to internal budgeted selection.
+    - Uses LLMLingua-2 `PromptCompressor` to materialize L1/L2/L3 by ratios.
+    - Falls back to a deterministic sentence-sampling strategy when LLMLingua is unavailable.
     """
 
-    def __init__(self, lingua_model: str = "llmlingua-2-bert-base-uncased", device: str = "cpu"):
+    def __init__(
+        self, lingua_model: str = "microsoft/llmlingua-2-bert-base-multilingual-cased-meetingbank", device: str = "cpu"
+    ):
         self.has_lingua = _HAS_LLMLINGUA
-        self.has_langchain = _HAS_LANGCHAIN
         self._lingua: Any = None
-        if self.has_lingua and LLMLingua is not None:
+        if self.has_lingua and PromptCompressor is not None:
             try:
-                self._lingua = LLMLingua(model=lingua_model, device=device)
-            except Exception:
+                # PromptCompressor(model_name=..., device_map=..., use_llmlingua2=True)
+                self._lingua = PromptCompressor(
+                    model_name=lingua_model,
+                    device_map=device,
+                    use_llmlingua2=True,
+                )
+            except Exception as e:
+                logger.warning(f"Failed to initialize PromptCompressor: {e}")
                 self._lingua = None
 
     def lingua_compress(self, text: str, ratio: float) -> str:
@@ -548,8 +550,23 @@ class Tier3Hierarchical:
             sents = re.split(r"(?<=[.!?])\s+", text)
             keep = max(1, int(len(sents) * ratio))
             return " ".join(sents[:keep])
-        res = self._lingua.compress_text(text, rate=ratio, force_tokens=None)
-        return res.get("compressed_text", "") or ""
+        # LLMLingua-2 API
+        # compress_prompt(prompt, rate=<0..1>, ...) -> dict with key 'compressed_prompt'
+        try:
+            res: dict[str, Any] = self._lingua.compress_prompt(
+                text,
+                rate=ratio,
+                use_token_level_filter=True,
+                use_context_level_filter=False,
+                target_token=-1,
+            )
+            return (res.get("compressed_prompt") or "").strip()
+        except Exception as e:
+            logger.warning(f"LLMLingua compression failed: {e}")
+            # fallback to sentence sampling
+            sents = re.split(r"(?<=[.!?])\s+", text)
+            keep = max(1, int(len(sents) * ratio))
+            return " ".join(sents[:keep])
 
     def build_hierarchical(self, text: str) -> dict[str, str]:
         # L1 (very small), L2 (small), L3 (larger) via LLMLingua if available
@@ -583,12 +600,23 @@ class SeraphCompressor:
       pack(path) -> tar.gz with manifest + layers
     """
 
-    def __init__(self, seed: int = 7):
+    def __init__(
+        self,
+        seed: int = 7,
+        l1_ratio: float = 0.02,
+        l2_ratio: float = 0.01,
+        l3_ratio: float = 0.05,
+        embedding_service: Any = None,
+    ):
         """
         Initialize SeraphCompressor with all three tiers.
 
         Args:
             seed: Random seed for deterministic compression
+            l1_ratio: Layer 1 compression ratio
+            l2_ratio: Layer 2 compression ratio
+            l3_ratio: Layer 3 compression ratio
+            embedding_service: Optional EmbeddingService for semantic similarity
 
         Raises:
             RuntimeError: If critical dependencies are missing
@@ -605,9 +633,10 @@ class SeraphCompressor:
             logger.critical(error_msg, extra={"missing_dependencies": missing_deps})
             raise RuntimeError(error_msg)
 
-        self.t1 = Tier1500x(seed=seed)
-        self.t2 = Tier2DCP()
+        self.t1 = Tier1500x(seed=seed, l1_ratio=l1_ratio, l2_ratio=l2_ratio, l3_ratio=l3_ratio)
+        self.t2 = Tier2DCP(embedding_service=embedding_service)
         self.t3 = Tier3Hierarchical()
+        self.embedding_service = embedding_service
 
         logger.info(
             "SeraphCompressor initialized",
@@ -616,12 +645,11 @@ class SeraphCompressor:
                 "tiktoken": _HAS_TIKTOKEN,
                 "blake3": _HAS_BLAKE3,
                 "llmlingua": _HAS_LLMLINGUA,
-                "langchain": _HAS_LANGCHAIN,
-                "embeddings": _HAS_EMBED,
+                "embeddings": embedding_service is not None,
             },
         )
 
-    def build(self, corpus_text: str) -> CompressionResult:
+    async def build(self, corpus_text: str) -> CompressionResult:
         """
         Build compressed layers from corpus text.
 
@@ -641,7 +669,7 @@ class SeraphCompressor:
 
             # Tier-2 prune L3 down to a compact capsule (approx 15% of L3 or 0.15*total)
             dcp_budget = max(256, int(count_tokens(corpus_text) * 0.08))
-            dcp = self.t2.compress(l3_concat, max_tokens=dcp_budget)
+            dcp = await self.t2.compress(l3_concat, max_tokens=dcp_budget)
 
             # Merge with Tier-3 (optional enrich)
             hcomp = self.t3.build_hierarchical(dcp if dcp else l3_concat)
@@ -781,7 +809,7 @@ def _read_text_from_path(p: str) -> str:
         raise OSError(f"Failed to read text from {p}: {e}") from e
 
 
-def main(argv: list[str] | None = None) -> None:
+async def _async_main(argv: list[str] | None = None) -> None:
     import argparse
 
     parser = argparse.ArgumentParser(description="Seraph 3-Tier Compressor")
@@ -801,7 +829,7 @@ def main(argv: list[str] | None = None) -> None:
     if args.cmd == "build":
         text = _read_text_from_path(args.input_path)
         sc = SeraphCompressor()
-        res = sc.build(text)
+        res = await sc.build(text)
         out = sc.pack(res, args.out)
         print(json.dumps(res.manifest, indent=2))
         print(f"Saved: {out} (tokens: L1={count_tokens(res.l1)}, L2={count_tokens(res.l2)}, L3={count_tokens(res.l3)})")
@@ -813,6 +841,11 @@ def main(argv: list[str] | None = None) -> None:
         top = sc.query(res, args.question, k=args.k)
         for s, txt in top:
             print(f"{s:.3f}: {txt}")
+
+
+def main(argv: list[str] | None = None) -> None:
+    """Synchronous wrapper for async main function."""
+    asyncio.run(_async_main(argv))
 
 
 if __name__ == "__main__":

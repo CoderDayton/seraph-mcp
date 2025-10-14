@@ -21,6 +21,32 @@ from fastmcp import FastMCP
 from .cache import close_all_caches, create_cache
 from .config import load_config
 from .observability import get_observability, initialize_observability
+from .providers.base import ProviderConfig as RuntimeProviderConfig
+from .providers.factory import create_provider as create_runtime_provider
+from .validation import validate_input
+from .validation.tool_schemas import (
+    AnalyzeTokenEfficiencyInput,
+    CacheClearInput,
+    CacheDeleteInput,
+    CacheGetInput,
+    CacheSetInput,
+    CheckBudgetInput,
+    CheckStatusInput,
+    ClearSemanticCacheInput,
+    CountTokensInput,
+    EstimateCostInput,
+    ForecastSpendingInput,
+    GetCacheStatsInput,
+    GetMetricsInput,
+    GetOptimizationSettingsInput,
+    GetOptimizationStatsInput,
+    GetSemanticCacheStatsInput,
+    GetUsageReportInput,
+    LookupSemanticCacheInput,
+    OptimizeContextInput,
+    SearchSemanticCacheInput,
+    StoreInSemanticCacheInput,
+)
 
 # Token optimization tools loaded lazily to keep module optional
 
@@ -45,6 +71,7 @@ _semantic_cache = None
 
 
 @mcp.tool()
+@validate_input(CheckStatusInput)
 async def check_status(include_details: bool = False) -> dict[str, Any]:
     """
     Check system health and status.
@@ -84,6 +111,7 @@ async def check_status(include_details: bool = False) -> dict[str, Any]:
 
 
 @mcp.tool()
+@validate_input(GetCacheStatsInput)
 async def get_cache_stats() -> dict[str, Any]:
     """
     Get detailed cache statistics.
@@ -101,6 +129,7 @@ async def get_cache_stats() -> dict[str, Any]:
 
 
 @mcp.tool()
+@validate_input(CacheGetInput)
 async def cache_get(key: str) -> Any | None:
     """
     Retrieve value from cache.
@@ -128,6 +157,7 @@ async def cache_get(key: str) -> Any | None:
 
 
 @mcp.tool()
+@validate_input(CacheSetInput)
 async def cache_set(key: str, value: Any, ttl: int | None = None) -> bool:
     """
     Store value in cache.
@@ -155,6 +185,7 @@ async def cache_set(key: str, value: Any, ttl: int | None = None) -> bool:
 
 
 @mcp.tool()
+@validate_input(CacheDeleteInput)
 async def cache_delete(key: str) -> bool:
     """
     Delete key from cache.
@@ -180,6 +211,7 @@ async def cache_delete(key: str) -> bool:
 
 
 @mcp.tool()
+@validate_input(CacheClearInput)
 async def cache_clear() -> bool:
     """
     Clear all entries from cache.
@@ -199,6 +231,7 @@ async def cache_clear() -> bool:
 
 
 @mcp.tool()
+@validate_input(GetMetricsInput)
 async def get_metrics() -> dict[str, Any]:
     """
     Get observability metrics.
@@ -220,110 +253,7 @@ async def get_metrics() -> dict[str, Any]:
 
 
 @mcp.tool()
-async def optimize_tokens(
-    content: str,
-    target_reduction: float | None = None,
-    model: str = "gpt-4",
-    strategies: list[str] | None = None,
-) -> dict[str, Any]:
-    """
-    Optimize content to reduce token count while preserving quality.
-
-    Applies multiple optimization strategies to reduce token usage
-    while maintaining content quality above the configured threshold.
-
-    Args:
-        content: Content to optimize
-        target_reduction: Target reduction ratio (0.0-0.5, default: 0.20)
-        model: Model to optimize for (default: "gpt-4")
-        strategies: List of strategies to apply (default: config value)
-
-    Returns:
-        Optimization result with metrics and optimized content
-    """
-    if _context_optimizer is None:
-        return {"error": "Context optimization is not enabled"}
-
-    obs = get_observability()
-    obs.increment("tools.optimize_tokens")
-
-    try:
-        # Import required modules
-        from .context_optimization import optimize_content
-        from .context_optimization.config import ContextOptimizationConfig
-
-        # Get or create config
-        config = _context_optimizer.get("config")
-        if config is None:
-            from .context_optimization.config import load_config as load_context_config
-
-            config = load_context_config()
-
-        # Update config based on parameters if provided
-        if target_reduction is not None or strategies is not None:
-            # Create a modified config
-            config_dict = config.model_dump()
-
-            if target_reduction is not None:
-                # Map target_reduction to compression method
-                if target_reduction <= 0.002:
-                    config_dict["compression_method"] = "seraph"
-                    config_dict["seraph_l1_ratio"] = target_reduction
-                elif target_reduction <= 0.05:
-                    config_dict["compression_method"] = "seraph"
-                    config_dict["seraph_l2_ratio"] = target_reduction
-                else:
-                    config_dict["compression_method"] = "hybrid"
-
-            if strategies is not None:
-                # Determine compression method from strategies
-                if "aggressive" in strategies or "hybrid" in strategies:
-                    config_dict["compression_method"] = "hybrid"
-                elif "seraph" in strategies:
-                    config_dict["compression_method"] = "seraph"
-                elif "ai" in strategies:
-                    config_dict["compression_method"] = "ai"
-
-            config = ContextOptimizationConfig(**config_dict)
-
-        # Get provider and budget tracker
-        provider = _context_optimizer.get("provider")
-        budget_tracker = _budget_tracker
-
-        # Call context optimization
-        result = await optimize_content(
-            content=content,
-            provider=provider,
-            config=config,
-            budget_tracker=budget_tracker,
-        )
-
-        return {
-            "success": True,
-            "original_content": result.original_content,
-            "optimized_content": result.optimized_content,
-            "tokens_before": result.tokens_before,
-            "tokens_after": result.tokens_after,
-            "tokens_saved": result.tokens_saved,
-            "reduction_percentage": result.reduction_percentage,
-            "quality_score": result.quality_score,
-            "validation_passed": result.validation_passed,
-            "method_used": result.method,
-            "processing_time_ms": result.optimization_time_ms,
-            "cost_savings_usd": result.cost_savings_usd,
-            "model": result.model_name or model,
-            "rollback_occurred": result.rollback_occurred,
-        }
-
-    except Exception as e:
-        logger.error(f"Error in optimize_tokens: {e}", exc_info=True)
-        return {
-            "success": False,
-            "error": str(e),
-        }
-
-
-@mcp.tool()
+@validate_input(CountTokensInput)
 async def count_tokens(
     content: str,
     model: str = "gpt-4",
@@ -407,6 +337,7 @@ async def count_tokens(
 
 
 @mcp.tool()
+@validate_input(EstimateCostInput)
 async def estimate_cost(
     content: str,
     model: str,
@@ -498,6 +429,7 @@ async def estimate_cost(
 
 
 @mcp.tool()
+@validate_input(AnalyzeTokenEfficiencyInput)
 async def analyze_token_efficiency(
     content: str,
     model: str = "gpt-4",
@@ -622,6 +554,7 @@ async def analyze_token_efficiency(
 
 
 @mcp.tool()
+@validate_input(CheckBudgetInput)
 async def check_budget(estimated_cost: float | None = None) -> dict[str, Any]:
     """
     Check current budget status and whether a request is allowed.
@@ -656,6 +589,7 @@ async def check_budget(estimated_cost: float | None = None) -> dict[str, Any]:
 
 
 @mcp.tool()
+@validate_input(GetUsageReportInput)
 async def get_usage_report(
     period: str = "month",
     details: bool = False,
@@ -695,6 +629,7 @@ async def get_usage_report(
 
 
 @mcp.tool()
+@validate_input(ForecastSpendingInput)
 async def forecast_spending(days_ahead: int = 7) -> dict[str, Any]:
     """
     Forecast future spending based on historical patterns.
@@ -733,6 +668,7 @@ async def forecast_spending(days_ahead: int = 7) -> dict[str, Any]:
 
 
 @mcp.tool()
+@validate_input(LookupSemanticCacheInput)
 async def lookup_semantic_cache(
     query: str,
     threshold: float | None = None,
@@ -777,6 +713,7 @@ async def lookup_semantic_cache(
 
 
 @mcp.tool()
+@validate_input(StoreInSemanticCacheInput)
 async def store_in_semantic_cache(
     key: str,
     value: Any,
@@ -819,6 +756,7 @@ async def store_in_semantic_cache(
 
 
 @mcp.tool()
+@validate_input(SearchSemanticCacheInput)
 async def search_semantic_cache(
     query: str,
     limit: int | None = None,
@@ -863,6 +801,7 @@ async def search_semantic_cache(
 
 
 @mcp.tool()
+@validate_input(GetSemanticCacheStatsInput)
 async def get_semantic_cache_stats() -> dict[str, Any]:
     """
     Get semantic cache statistics.
@@ -893,6 +832,7 @@ async def get_semantic_cache_stats() -> dict[str, Any]:
 
 
 @mcp.tool()
+@validate_input(ClearSemanticCacheInput)
 async def clear_semantic_cache() -> dict[str, Any]:
     """
     Clear all entries from semantic cache.
@@ -927,6 +867,7 @@ async def clear_semantic_cache() -> dict[str, Any]:
 
 
 @mcp.tool()
+@validate_input(OptimizeContextInput)
 async def optimize_context(
     content: str,
     method: str = "auto",
@@ -953,18 +894,17 @@ async def optimize_context(
 
     try:
         from .context_optimization import optimize_content
+        from .context_optimization.config import ContextOptimizationConfig
 
         # Use provided thresholds or defaults from config
         config = _context_optimizer.get("config")
-        if config is None:
+        if not isinstance(config, ContextOptimizationConfig):
             return {"error": "Context optimization config not available"}
 
         threshold = quality_threshold if quality_threshold is not None else config.quality_threshold
         overhead = max_overhead_ms if max_overhead_ms is not None else config.max_overhead_ms
 
         # Create a temporary config with the specified method
-        from .context_optimization.config import ContextOptimizationConfig
-
         temp_config = ContextOptimizationConfig(
             enabled=True,
             compression_method=method,
@@ -991,10 +931,10 @@ async def optimize_context(
             "tokens_saved": result.tokens_saved,
             "reduction_percentage": result.reduction_percentage,
             "quality_score": result.quality_score,
-            "method_used": getattr(result, "method_used", method),
-            "processing_time_ms": result.optimization_time_ms,
+            "method_used": result.method,
+            "processing_time_ms": result.processing_time_ms,
             "validation_passed": result.validation_passed,
-            "rollback_occurred": result.rollback_occurred,
+            "rollback_occurred": result.metadata.get("rollback_occurred", False),
         }
 
     except Exception as e:
@@ -1006,6 +946,7 @@ async def optimize_context(
 
 
 @mcp.tool()
+@validate_input(GetOptimizationSettingsInput)
 async def get_optimization_settings() -> dict[str, Any]:
     """
     Get current context optimization settings.
@@ -1020,9 +961,9 @@ async def get_optimization_settings() -> dict[str, Any]:
     obs.increment("tools.get_optimization_settings")
 
     try:
-        config = _context_optimizer.get("config")
-        if config is None:
-            return {"error": "Context optimization config not available"}
+        from .context_optimization.config import ContextOptimizationConfig
+
+        config: ContextOptimizationConfig = _context_optimizer.get("config")
 
         return {
             "success": True,
@@ -1045,6 +986,7 @@ async def get_optimization_settings() -> dict[str, Any]:
 
 
 @mcp.tool()
+@validate_input(GetOptimizationStatsInput)
 async def get_optimization_stats() -> dict[str, Any]:
     """
     Get context optimization statistics.
@@ -1059,12 +1001,22 @@ async def get_optimization_stats() -> dict[str, Any]:
     obs.increment("tools.get_optimization_stats")
 
     try:
-        # Get stats from the optimizer instance if available
-        # Note: We store config, not the optimizer instance, so we return available info
+        # P0: Get stats from optimizer instance
+        optimizer = _context_optimizer.get("instance")
+        if optimizer is None:
+            return {
+                "success": True,
+                "message": "Context optimization is enabled but optimizer instance not available.",
+                "optimizer_initialized": False,
+            }
+
+        # Get comprehensive statistics from optimizer
+        stats = optimizer.get_stats()
+
         return {
             "success": True,
-            "message": "Context optimization is enabled. Use optimize_context() to generate statistics.",
             "optimizer_initialized": True,
+            **stats,
         }
 
     except Exception as e:
@@ -1077,24 +1029,68 @@ async def get_optimization_stats() -> dict[str, Any]:
 
 def _init_context_optimization_if_available(config: Any) -> None:
     global _context_optimizer
+
     if _context_optimizer is not None:
         return
+
     try:
         from .context_optimization.config import load_config as load_context_config
+        from .context_optimization.optimizer import ContextOptimizer
+
     except Exception as e:
         logger.info("Context optimization module not available or failed to import: %s", e)
+
         _context_optimizer = None
+
         return
+
     try:
         context_config = load_context_config()
-        # Store config and provider for use by tools
+
+        # Initialize a provider via providers.factory (first enabled and configured)
+        provider_instance = None
+        providers_cfg = getattr(config, "providers", None)
+        if providers_cfg:
+            candidates = [
+                ("openai", providers_cfg.openai),
+                ("anthropic", providers_cfg.anthropic),
+                ("gemini", providers_cfg.gemini),
+                ("openai-compatible", providers_cfg.openai_compatible),
+            ]
+            for name, pcfg in candidates:
+                try:
+                    if getattr(pcfg, "enabled", False) and getattr(pcfg, "api_key", None):
+                        runtime_cfg = RuntimeProviderConfig(
+                            api_key=pcfg.api_key or "",
+                            base_url=pcfg.base_url,
+                            timeout=pcfg.timeout,
+                            max_retries=pcfg.max_retries,
+                            enabled=True,
+                        )
+                        provider_instance = create_runtime_provider(name, runtime_cfg)
+                        break
+                except Exception as e2:
+                    logger.info(f"Skipping provider {name}: {e2}")
+
+        # P0: Initialize optimizer instance (not just config)
+        budget_tracker_instance = _budget_tracker if _budget_tracker else None
+        optimizer_instance = ContextOptimizer(
+            config=context_config,
+            provider=provider_instance,
+            budget_tracker=budget_tracker_instance,
+        )
+
+        # P0: Store config, provider, and optimizer instance for use by tools
         _context_optimizer = {
             "config": context_config,
-            "provider": None,  # Can be set later if provider is available
+            "provider": provider_instance,
+            "instance": optimizer_instance,
         }
-        logger.info("Context optimization initialized")
+        logger.info("Context optimization initialized with optimizer instance")
+
     except Exception as e:
         logger.warning("Context optimization initialization failed: %s", e)
+
         _context_optimizer = None
 
 
@@ -1177,14 +1173,13 @@ async def initialize_server() -> None:
         logger.info(f"Cache initialized: backend={stats['backend']}")
 
         # Initialize context optimization if enabled (lazy and optional)
-        # Note: token_optimization feature flag now controls context_optimization
-        if config.features.token_optimization or config.features.context_optimization:
+        if config.features.context_optimization:
             _init_context_optimization_if_available(config)
         else:
             logger.info("Context optimization disabled via feature flags")
 
         # Initialize budget management if enabled
-        if config.features.budget_management or config.budget.enable_budget_enforcement:
+        if config.features.budget_management:
             _init_budget_management_if_available(config)
         else:
             logger.info("Budget management disabled via feature flags")
@@ -1203,8 +1198,6 @@ async def initialize_server() -> None:
                 "environment": config.environment,
                 "cache_backend": config.cache.backend,
                 "features_enabled": {
-                    "token_optimization": config.features.token_optimization,
-                    "model_routing": config.features.model_routing,
                     "semantic_cache": config.features.semantic_cache,
                     "context_optimization": config.features.context_optimization,
                     "budget_management": config.features.budget_management,
@@ -1276,11 +1269,6 @@ async def lifespan():  # type: ignore[no-untyped-def]
     await initialize_server()
     yield
     await cleanup_server()
-
-
-def run_server() -> None:
-    """Run the MCP server."""
-    mcp.run()
 
 
 def main() -> None:

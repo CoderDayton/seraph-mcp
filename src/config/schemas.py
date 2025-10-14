@@ -15,6 +15,11 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+# Unified runtime budget configuration:
+# We import the canonical BudgetConfig from budget_management to avoid drift
+# and maintain a single source of truth.
+from ..budget_management.config import BudgetConfig as BudgetConfig
+
 
 class Environment(str, Enum):
     """Runtime environment."""
@@ -97,67 +102,10 @@ class ObservabilityConfig(BaseModel):
 class FeatureFlags(BaseModel):
     """Feature flags for enabling/disabling platform capabilities."""
 
-    token_optimization: bool = Field(default=True, description="Enable token optimization features")
-    model_routing: bool = Field(default=False, description="Enable intelligent model routing (future)")
-    semantic_cache: bool = Field(default=False, description="Enable semantic caching (future)")
-    context_optimization: bool = Field(default=False, description="Enable context optimization (future)")
-    budget_management: bool = Field(default=False, description="Enable budget management (future)")
+    semantic_cache: bool = Field(default=False, description="Enable semantic caching")
+    context_optimization: bool = Field(default=False, description="Enable context optimization")
+    budget_management: bool = Field(default=False, description="Enable budget management")
     quality_preservation: bool = Field(default=False, description="Enable quality preservation (future)")
-
-
-class TokenOptimizationConfig(BaseModel):
-    """Token optimization feature configuration."""
-
-    enabled: bool = Field(default=True, description="Enable token optimization features")
-    default_reduction_target: float = Field(
-        default=0.20,
-        ge=0.0,
-        le=0.5,
-        description="Default token reduction target (0.0-0.5 = 0-50%)",
-    )
-    quality_threshold: float = Field(
-        default=0.90,
-        ge=0.0,
-        le=1.0,
-        description="Minimum quality threshold for optimizations (0.0-1.0)",
-    )
-    cache_optimizations: bool = Field(default=True, description="Cache optimization patterns for reuse")
-    optimization_strategies: list[str] = Field(
-        default_factory=lambda: ["whitespace", "redundancy", "compression"],
-        description="Active optimization strategies",
-    )
-    max_overhead_ms: float = Field(
-        default=100.0,
-        ge=0.0,
-        description="Maximum acceptable processing overhead in milliseconds",
-    )
-    enable_aggressive_mode: bool = Field(
-        default=False, description="Enable aggressive optimization (may reduce quality)"
-    )
-    preserve_code_blocks: bool = Field(default=True, description="Preserve code blocks and structured content")
-    preserve_formatting: bool = Field(default=True, description="Preserve important formatting (lists, tables, etc.)")
-    cache_ttl_seconds: int = Field(default=3600, ge=0, description="TTL for cached optimizations in seconds")
-
-
-class BudgetConfig(BaseModel):
-    """Budget enforcement configuration (plugin-provided features)."""
-
-    enable_budget_enforcement: bool = Field(default=False, description="Enable budget limits (requires plugin)")
-    daily_budget_limit: float | None = Field(default=None, ge=0.0, description="Daily budget in USD")
-    monthly_budget_limit: float | None = Field(default=None, ge=0.0, description="Monthly budget in USD")
-    alert_thresholds: list[float] = Field(
-        default_factory=lambda: [0.5, 0.75, 0.9],
-        description="Budget alert thresholds (0.0-1.0)",
-    )
-
-    @field_validator("alert_thresholds")
-    @classmethod
-    def validate_thresholds(cls, v: list[float]) -> list[float]:
-        """Ensure all thresholds are between 0 and 1."""
-        for threshold in v:
-            if not 0.0 <= threshold <= 1.0:
-                raise ValueError(f"Alert threshold must be between 0.0 and 1.0, got {threshold}")
-        return sorted(v)
 
 
 class SecurityConfig(BaseModel):
@@ -209,7 +157,6 @@ class SeraphConfig(BaseModel):
     cache: CacheConfig = Field(default_factory=CacheConfig)
     observability: ObservabilityConfig = Field(default_factory=ObservabilityConfig)
     features: FeatureFlags = Field(default_factory=FeatureFlags)
-    token_optimization: TokenOptimizationConfig = Field(default_factory=TokenOptimizationConfig)
     budget: BudgetConfig = Field(default_factory=BudgetConfig)
     security: SecurityConfig = Field(default_factory=SecurityConfig)
     providers: ProvidersConfig = Field(default_factory=ProvidersConfig)

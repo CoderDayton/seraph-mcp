@@ -3,9 +3,57 @@ Seraph MCP - Core Error Types
 
 Defines standard exception hierarchy for the Seraph MCP core runtime.
 All exceptions should inherit from SeraphError for consistent error handling.
+
+P0 Enhancements:
+- ErrorCode enum for structured error responses
+- Circuit breaker error types
+- Enhanced provider error handling
+- Validation error utilities
 """
 
+from enum import Enum
 from typing import Any
+
+
+class ErrorCode(str, Enum):
+    """
+    Standard error codes for MCP tool responses.
+
+    Used for structured error handling and client-side error recovery.
+    """
+
+    # Input validation errors
+    INVALID_INPUT = "INVALID_INPUT"
+    MISSING_PARAMETER = "MISSING_PARAMETER"
+    INVALID_PARAMETER_TYPE = "INVALID_PARAMETER_TYPE"
+    INVALID_PARAMETER_VALUE = "INVALID_PARAMETER_VALUE"
+
+    # Provider errors
+    PROVIDER_ERROR = "PROVIDER_ERROR"
+    PROVIDER_TIMEOUT = "PROVIDER_TIMEOUT"
+    PROVIDER_UNAVAILABLE = "PROVIDER_UNAVAILABLE"
+    RATE_LIMITED = "RATE_LIMITED"
+
+    # Circuit breaker errors
+    CIRCUIT_OPEN = "CIRCUIT_OPEN"
+    CIRCUIT_HALF_OPEN = "CIRCUIT_HALF_OPEN"
+
+    # Feature availability errors
+    FEATURE_DISABLED = "FEATURE_DISABLED"
+    OPTIMIZATION_DISABLED = "OPTIMIZATION_DISABLED"
+    CACHE_DISABLED = "CACHE_DISABLED"
+    BUDGET_DISABLED = "BUDGET_DISABLED"
+
+    # Cache errors
+    CACHE_FAILURE = "CACHE_FAILURE"
+    CACHE_MISS = "CACHE_MISS"
+
+    # Budget errors
+    BUDGET_EXCEEDED = "BUDGET_EXCEEDED"
+
+    # Internal errors
+    INTERNAL_ERROR = "INTERNAL_ERROR"
+    UNKNOWN_ERROR = "UNKNOWN_ERROR"
 
 
 class SeraphError(Exception):
@@ -121,11 +169,40 @@ class ProviderRateLimitError(ProviderError):
 
     def __init__(self, provider: str, retry_after: int | None = None):
         message = f"Provider {provider} rate limit exceeded"
-        details: dict[str, Any] = {"provider": provider}
+        details: dict[str, Any] = {"provider": provider, "error_code": ErrorCode.RATE_LIMITED}
         if retry_after:
             details["retry_after"] = retry_after
         super().__init__(message, details)
         self.status_code = 429
+
+
+class CircuitBreakerError(SeraphError):
+    """Raised when circuit breaker is open or half-open."""
+
+    def __init__(
+        self,
+        provider: str,
+        state: str,
+        fail_count: int | None = None,
+        reset_timeout: int | None = None,
+    ):
+        message = f"Circuit breaker {state} for provider {provider}"
+        details: dict[str, Any] = {
+            "provider": provider,
+            "circuit_state": state,
+            "error_code": ErrorCode.CIRCUIT_OPEN if state == "open" else ErrorCode.CIRCUIT_HALF_OPEN,
+        }
+        if fail_count is not None:
+            details["fail_count"] = fail_count
+        if reset_timeout is not None:
+            details["reset_timeout_seconds"] = reset_timeout
+        super().__init__(message, details, status_code=503)
+
+        # Store as instance attributes for access in exception handlers
+        self.provider = provider
+        self.state = state
+        self.fail_count = fail_count
+        self.reset_timeout = reset_timeout
 
 
 class ValidationError(SeraphError):
@@ -192,3 +269,114 @@ class CompressionError(SeraphError):
 
     def __init__(self, message: str, details: dict[str, Any] | None = None):
         super().__init__(message, details, status_code=500)
+
+
+def make_error_response(
+    error_code: ErrorCode,
+    message: str,
+    context: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """
+    Create a standardized error response for MCP tools.
+
+    Args:
+        error_code: Standard error code
+        message: Human-readable error message
+        context: Additional context/details
+
+    Returns:
+        Standardized error response dictionary
+
+    Example:
+        >>> make_error_response(
+        ...     ErrorCode.INVALID_INPUT,
+        ...     "Query parameter is required",
+        ...     {"parameter": "query", "provided_value": None}
+        ... )
+        {
+            "success": False,
+            "error_code": "INVALID_INPUT",
+            "message": "Query parameter is required",
+            "details": {"parameter": "query", "provided_value": None}
+        }
+    """
+    return {
+        "success": False,
+        "error_code": error_code.value,
+        "message": message,
+        "details": context or {},
+    }
+
+
+def is_retryable_error(error: Exception) -> bool:
+    """
+    Check if an error is transient and should be retried.
+
+    Args:
+        error: Exception to check
+
+    Returns:
+        True if error is retryable (transient)
+    """
+    # Network/timeout errors are retryable
+    if isinstance(error, ProviderTimeoutError):
+        return True
+
+    # Rate limits are retryable after backoff
+    if isinstance(error, ProviderRateLimitError):
+        return True
+
+    # Generic provider errors might be transient
+    if isinstance(error, ProviderError):
+        # Check for common transient error indicators
+        error_msg = str(error).lower()
+        transient_indicators = [
+            "timeout",
+            "connection",
+            "network",
+            "503",
+            "502",
+            "504",
+            "unavailable",
+            "temporary",
+        ]
+        return any(indicator in error_msg for indicator in transient_indicators)
+
+    return False
+
+
+def extract_error_code(error: Exception) -> ErrorCode:
+    """
+    Extract appropriate ErrorCode from an exception.
+
+    Args:
+        error: Exception to categorize
+
+    Returns:
+        Appropriate ErrorCode for the exception
+    """
+    if isinstance(error, CircuitBreakerError):
+        return ErrorCode.CIRCUIT_OPEN
+
+    if isinstance(error, ProviderRateLimitError):
+        return ErrorCode.RATE_LIMITED
+
+    if isinstance(error, ProviderTimeoutError):
+        return ErrorCode.PROVIDER_TIMEOUT
+
+    if isinstance(error, ProviderError):
+        return ErrorCode.PROVIDER_ERROR
+
+    if isinstance(error, ValidationError):
+        return ErrorCode.INVALID_INPUT
+
+    if isinstance(error, CacheError):
+        return ErrorCode.CACHE_FAILURE
+
+    if isinstance(error, BudgetExceededError):
+        return ErrorCode.BUDGET_EXCEEDED
+
+    if isinstance(error, ConfigurationError):
+        return ErrorCode.FEATURE_DISABLED
+
+    return ErrorCode.INTERNAL_ERROR

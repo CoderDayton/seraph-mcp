@@ -1,14 +1,15 @@
 """
 Semantic Cache Implementation
 
-Minimal ChromaDB-backed semantic cache with vector similarity search.
+ChromaDB-backed semantic cache with vector similarity search and multi-layer eviction.
 Uses the provider system for embeddings.
 
 Per SDD.md:
-- Minimal, functional implementation
 - ChromaDB for vector storage
 - Provider system for embeddings
 - Similarity-based cache hits
+- Multi-layer LRU+FIFO eviction (P0 Phase 3)
+- Optional TTL support (disabled by default)
 """
 
 import hashlib
@@ -23,21 +24,30 @@ try:
     CHROMADB_AVAILABLE = True
 except ImportError:
     chromadb = None  # type: ignore[assignment]
-    Settings = None  # type: ignore[assignment, misc]
+    Settings = None  # type: ignore[assignment,misc]
     CHROMADB_AVAILABLE = False
 
 from ..providers import ProviderConfig
 from .config import SemanticCacheConfig
 from .embeddings import EmbeddingGenerator
+from .eviction import MultiLayerCache
 
 logger = logging.getLogger(__name__)
 
 
 class SemanticCache:
     """
-    Semantic cache with vector similarity search.
+    Semantic cache with vector similarity search and multi-layer eviction.
 
-    Uses ChromaDB for vector storage and provider system for embeddings.
+    Uses ChromaDB for vector storage, provider system for embeddings,
+    and multi-layer LRU+FIFO cache for efficient access patterns.
+
+    Architecture:
+        - Hot tier (LRU): Recently accessed items
+        - Cold tier (FIFO): Less frequent items
+        - ChromaDB: Persistent vector storage
+        - Automatic promotion on re-access
+        - Optional TTL (disabled by default)
     """
 
     def __init__(self, config: SemanticCacheConfig):
@@ -54,6 +64,9 @@ class SemanticCache:
         self._embedding_generator: EmbeddingGenerator | None = None
         self._client: Any = None
         self._collection: Any = None
+
+        # Multi-layer cache for efficient access (P0 Phase 3)
+        self._multi_cache: MultiLayerCache | None = None
 
         self._initialize()
 
@@ -76,19 +89,35 @@ class SemanticCache:
 
         logger.info(f"ChromaDB collection '{self.config.collection_name}' ready")
 
+        # Initialize multi-layer cache (P0 Phase 3)
+        self._multi_cache = MultiLayerCache(
+            lru_size=self.config.lru_cache_size,
+            fifo_size=self.config.fifo_cache_size,
+            ttl_seconds=self.config.entry_ttl_seconds,
+            high_watermark_pct=self.config.high_watermark_pct,
+            cleanup_batch_size=self.config.cleanup_batch_size,
+        )
+        logger.info("Multi-layer cache initialized")
+
     def _get_embedding_generator(self) -> EmbeddingGenerator:
         """Get or create embedding generator."""
         if self._embedding_generator is None:
-            # Create provider config if needed
-            provider_config = None
-            if self.config.embedding_provider != "local":
-                provider_config = ProviderConfig(
-                    api_key=self.config.embedding_api_key or "",
-                    base_url=self.config.embedding_base_url,
-                    timeout=30.0,
-                    max_retries=3,
-                    enabled=True,
+            # Provider config is now always required (no more local mode)
+            if not self.config.embedding_api_key:
+                raise RuntimeError(
+                    f"embedding_api_key is required for provider '{self.config.embedding_provider}'. "
+                    "Local (sentence-transformers) embeddings are no longer supported. "
+                    "Configure an API provider (openai, openai-compatible, gemini) or use "
+                    "openai-compatible with a local endpoint like Ollama."
                 )
+
+            provider_config = ProviderConfig(
+                api_key=self.config.embedding_api_key,
+                base_url=self.config.embedding_base_url,
+                timeout=30.0,
+                max_retries=3,
+                enabled=True,
+            )
 
             self._embedding_generator = EmbeddingGenerator(
                 provider_name=self.config.embedding_provider,
@@ -126,11 +155,18 @@ class SemanticCache:
         threshold = threshold or self.config.similarity_threshold
 
         try:
+            # Try multi-layer cache first (P0 Phase 3)
+            if self._multi_cache:
+                cached_result = self._multi_cache.get(query)
+                if cached_result is not None:
+                    logger.debug(f"Multi-layer cache hit for query: {query[:50]}...")
+                    return cached_result
+
             # Generate embedding for query
             generator = self._get_embedding_generator()
             embedding = await generator.generate(query)
 
-            # Search for similar entries
+            # Search for similar entries in ChromaDB
             results = self._collection.query(
                 query_embeddings=[embedding],
                 n_results=max_results,
@@ -147,13 +183,25 @@ class SemanticCache:
             if best_similarity < threshold:
                 return None
 
-            # Return cached value
-            return {
+            # Build result
+            result = {
                 "value": results["documents"][0][0],
                 "metadata": results["metadatas"][0][0],
                 "similarity": best_similarity,
                 "id": results["ids"][0][0],
             }
+
+            # Store in multi-layer cache (P0 Phase 3)
+            if self._multi_cache:
+                self._multi_cache.set(query, result, metadata=result["metadata"])
+
+            # Process eviction queue for batch ChromaDB deletes
+            if self._multi_cache:
+                evicted_keys = self._multi_cache.get_eviction_queue()
+                if evicted_keys:
+                    await self._batch_delete_chromadb(evicted_keys)
+
+            return result
 
         except Exception as e:
             logger.error(f"Error getting from semantic cache: {e}")
@@ -206,6 +254,22 @@ class SemanticCache:
                 documents=[value_str],
                 metadatas=[meta],
             )
+
+            # Store in multi-layer cache (P0 Phase 3)
+            if self._multi_cache:
+                cache_entry = {
+                    "value": value_str,
+                    "metadata": meta,
+                    "similarity": 1.0,  # Exact match
+                    "id": entry_id,
+                }
+                self._multi_cache.set(key, cache_entry, metadata=meta)
+
+            # Process eviction queue for batch ChromaDB deletes
+            if self._multi_cache:
+                evicted_keys = self._multi_cache.get_eviction_queue()
+                if evicted_keys:
+                    await self._batch_delete_chromadb(evicted_keys)
 
             return True
 
@@ -298,18 +362,40 @@ class SemanticCache:
             logger.error(f"Error clearing semantic cache: {e}")
             return False
 
+    async def _batch_delete_chromadb(self, keys: list[str]) -> None:
+        """
+        Batch delete entries from ChromaDB.
+
+        Args:
+            keys: List of entry IDs to delete
+        """
+        if not keys:
+            return
+
+        try:
+            # Generate IDs from keys
+            ids = [self._generate_id(key) for key in keys]
+
+            # Batch delete from ChromaDB
+            if self._collection is not None:
+                self._collection.delete(ids=ids)
+                logger.info(f"Batch deleted {len(ids)} entries from ChromaDB")
+
+        except Exception as e:
+            logger.error(f"Error batch deleting from ChromaDB: {e}")
+
     def get_stats(self) -> dict[str, Any]:
         """
-        Get cache statistics.
+        Get cache statistics including multi-layer cache metrics.
 
         Returns:
-            Dictionary with cache stats
+            Dictionary with cache stats including eviction metrics
         """
         if self._collection is None:
             raise RuntimeError("Collection not initialized")
         count = self._collection.count()
 
-        return {
+        base_stats = {
             "enabled": self.config.enabled,
             "total_entries": count,
             "collection_name": self.config.collection_name,
@@ -319,11 +405,22 @@ class SemanticCache:
             "max_cache_entries": self.config.max_cache_entries,
         }
 
+        # Add multi-layer cache stats (P0 Phase 3)
+        if self._multi_cache:
+            multi_cache_stats = self._multi_cache.get_stats()
+            base_stats["multi_layer_cache"] = multi_cache_stats
+
+        return base_stats
+
     async def close(self) -> None:
         """Clean up resources."""
         # ChromaDB client cleanup
         if self._embedding_generator:
             self._embedding_generator.clear_cache()
+
+        # Clear multi-layer cache
+        if self._multi_cache:
+            self._multi_cache.clear()
 
         logger.info("Semantic cache closed")
 

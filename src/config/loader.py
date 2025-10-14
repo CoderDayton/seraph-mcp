@@ -91,23 +91,22 @@ def load_config(
             "datadog_api_key": os.getenv("DATADOG_API_KEY"),
             "datadog_site": os.getenv("DATADOG_SITE", "datadoghq.com"),
         },
-        "optimization": {
-            "enable_optimization": os.getenv("ENABLE_OPTIMIZATION", "true").lower() == "true",
-            "optimization_mode": os.getenv("OPTIMIZATION_MODE", "balanced"),
-            "quality_threshold": float(os.getenv("QUALITY_THRESHOLD", "0.90")),
-            "max_overhead_ms": float(os.getenv("MAX_OVERHEAD_MS", "100.0")),
-        },
         "budget": {
-            "enable_budget_enforcement": os.getenv("ENABLE_BUDGET_ENFORCEMENT", "false").lower() == "true",
-            "daily_budget_limit": float(os.getenv("DAILY_BUDGET_LIMIT", "0"))
-            if os.getenv("DAILY_BUDGET_LIMIT")
-            else None,
-            "monthly_budget_limit": float(os.getenv("MONTHLY_BUDGET_LIMIT", "0"))
+            "enabled": os.getenv("BUDGET_ENABLED", "false").lower() == "true",
+            "daily_limit": float(os.getenv("DAILY_BUDGET_LIMIT", "0")) if os.getenv("DAILY_BUDGET_LIMIT") else None,
+            "monthly_limit": float(os.getenv("MONTHLY_BUDGET_LIMIT", "0"))
             if os.getenv("MONTHLY_BUDGET_LIMIT")
             else None,
+            "weekly_limit": float(os.getenv("WEEKLY_BUDGET_LIMIT", "0")) if os.getenv("WEEKLY_BUDGET_LIMIT") else None,
             "alert_thresholds": [
                 float(x.strip()) for x in os.getenv("BUDGET_ALERT_THRESHOLDS", "0.5,0.75,0.9").split(",")
             ],
+            "enforcement_mode": os.getenv("BUDGET_ENFORCEMENT_MODE", "soft"),
+            "db_path": os.getenv("BUDGET_DB_PATH", "./data/budget.db"),
+            "webhook_url": os.getenv("BUDGET_WEBHOOK_URL"),
+            "webhook_enabled": os.getenv("BUDGET_WEBHOOK_ENABLED", "false").lower() == "true",
+            "forecasting_days": int(os.getenv("BUDGET_FORECASTING_DAYS", "7")),
+            "historical_days": int(os.getenv("BUDGET_HISTORICAL_DAYS", "30")),
         },
         "security": {
             "enable_auth": os.getenv("ENABLE_AUTH", "false").lower() == "true",
