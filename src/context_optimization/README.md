@@ -103,12 +103,12 @@ Builds three layers using deterministic algorithms:
   - Bullets from anchor extraction
   - Entities, quantities, dates, URLs
   - SimHash deduplication
-  
+
 - **L2 (1% ratio)**: Compact abstracts
   - Section summaries
   - BM25 salience scoring
   - Top-ranked chunks
-  
+
 - **L3 (5% ratio)**: Factual extracts
   - Top salient content
   - Structure-preserving

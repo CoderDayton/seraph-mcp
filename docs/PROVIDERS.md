@@ -619,6 +619,6 @@ config = ProviderConfig(
 
 ---
 
-**Version**: 1.0  
-**Last Updated**: 2025-01-13  
+**Version**: 1.0
+**Last Updated**: 2025-01-13
 **Maintained by**: Seraph MCP Team
