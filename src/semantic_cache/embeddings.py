@@ -12,8 +12,14 @@ Per SDD.md:
 """
 
 import logging
+from typing import TYPE_CHECKING
 
 from ..providers import ProviderConfig, create_provider
+
+if TYPE_CHECKING:
+    from sentence_transformers import SentenceTransformer
+
+    from ..providers.base import BaseProvider
 
 logger = logging.getLogger(__name__)
 
@@ -49,8 +55,8 @@ class EmbeddingGenerator:
         self.provider_config = provider_config
         self.cache_embeddings = cache_embeddings
         self._cache: dict[str, list[float]] = {} if cache_embeddings else {}
-        self._provider = None
-        self._local_model = None
+        self._provider: BaseProvider | None = None
+        self._local_model: SentenceTransformer | None = None
 
         self._initialize()
 
@@ -62,11 +68,11 @@ class EmbeddingGenerator:
             self._initialize_provider()
 
     def _initialize_local(self) -> None:
-        """Initialize local sentence-transformers model."""
+        """Initialize local embedding model (sentence-transformers)."""
         try:
             from sentence_transformers import SentenceTransformer
         except ImportError as e:
-            raise RuntimeError(
+            raise ImportError(
                 "sentence-transformers not installed. Install with: pip install sentence-transformers"
             ) from e
 

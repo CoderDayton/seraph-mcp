@@ -11,6 +11,7 @@ Following SDD.md:
 """
 
 from enum import Enum
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -64,7 +65,7 @@ class CacheConfig(BaseModel):
 
     @field_validator("redis_url")
     @classmethod
-    def validate_redis_url(cls, v: str | None, info) -> str | None:
+    def validate_redis_url(cls, v: str | None, info: Any) -> str | None:
         """Ensure redis_url is provided when backend is redis."""
         backend = info.data.get("backend")
         if backend == CacheBackend.REDIS and not v:
@@ -223,7 +224,7 @@ class SeraphConfig(BaseModel):
 
     @field_validator("security")
     @classmethod
-    def validate_security(cls, v: SecurityConfig, info) -> SecurityConfig:
+    def validate_security(cls, v: SecurityConfig, info: Any) -> SecurityConfig:
         """Enforce security requirements in production."""
         environment = info.data.get("environment")
         if environment == Environment.PRODUCTION:

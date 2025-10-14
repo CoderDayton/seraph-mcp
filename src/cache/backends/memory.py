@@ -6,11 +6,14 @@ Thread-safe and suitable for single-process deployments.
 """
 
 import asyncio
+import logging
 import time
 from collections import OrderedDict
 from typing import Any
 
 from ..interface import CacheInterface
+
+logger = logging.getLogger(__name__)
 
 
 class MemoryCacheBackend(CacheInterface):
@@ -67,27 +70,40 @@ class MemoryCacheBackend(CacheInterface):
 
     async def get(self, key: str) -> Any | None:
         """Retrieve value from cache."""
-        async with self._lock:
-            cache_key = self._make_key(key)
+        if not key:
+            logger.warning("Attempted to get cache value with empty key")
+            return None
 
-            if cache_key not in self._cache:
-                self._misses += 1
-                return None
+        try:
+            async with self._lock:
+                cache_key = self._make_key(key)
 
-            value, expiry = self._cache[cache_key]
+                if cache_key not in self._cache:
+                    self._misses += 1
+                    return None
 
-            # Check expiry
-            if self._is_expired(expiry):
-                # Remove expired entry
-                del self._cache[cache_key]
-                self._misses += 1
-                return None
+                value, expiry = self._cache[cache_key]
 
-            # Move to end (mark as recently used)
-            self._cache.move_to_end(cache_key)
-            self._hits += 1
+                # Check expiry
+                if self._is_expired(expiry):
+                    # Remove expired entry
+                    del self._cache[cache_key]
+                    self._misses += 1
+                    return None
 
-            return value
+                # Move to end (mark as recently used)
+                self._cache.move_to_end(cache_key)
+                self._hits += 1
+
+                return value
+        except Exception as e:
+            logger.error(
+                f"Unexpected error getting key '{key}' from memory cache: {e}",
+                extra={"key": key, "namespace": self.namespace, "error": str(e)},
+                exc_info=True,
+            )
+            self._misses += 1
+            return None
 
     async def set(
         self,
@@ -96,65 +112,111 @@ class MemoryCacheBackend(CacheInterface):
         ttl: int | None = None,
     ) -> bool:
         """Store value in cache."""
-        async with self._lock:
-            cache_key = self._make_key(key)
+        if not key:
+            logger.warning("Attempted to set cache value with empty key")
+            return False
 
-            # Calculate expiry time
-            if ttl is None:
-                ttl = self.default_ttl
+        try:
+            async with self._lock:
+                cache_key = self._make_key(key)
 
-            if ttl > 0:
-                expiry = time.time() + ttl
-            else:
-                expiry = None  # No expiry
+                # Calculate expiry time
+                if ttl is None:
+                    ttl = self.default_ttl
 
-            # Evict if at capacity and key is new
-            if cache_key not in self._cache and len(self._cache) >= self.max_size:
-                # Remove oldest entry (LRU)
-                self._cache.popitem(last=False)
-                self._evictions += 1
+                if ttl > 0:
+                    expiry = time.time() + ttl
+                else:
+                    expiry = None  # No expiry
 
-            # Store value
-            self._cache[cache_key] = (value, expiry)
-            self._cache.move_to_end(cache_key)
-            self._sets += 1
+                # Evict if at capacity and key is new
+                if cache_key not in self._cache and len(self._cache) >= self.max_size:
+                    # Remove oldest entry (LRU)
+                    evicted_key, _ = self._cache.popitem(last=False)
+                    self._evictions += 1
+                    logger.debug(f"Evicted key from memory cache: {evicted_key}")
 
-            return True
+                # Store value
+                self._cache[cache_key] = (value, expiry)
+                self._cache.move_to_end(cache_key)
+                self._sets += 1
+
+                return True
+        except Exception as e:
+            logger.error(
+                f"Unexpected error setting key '{key}' in memory cache: {e}",
+                extra={"key": key, "namespace": self.namespace, "ttl": ttl, "error": str(e)},
+                exc_info=True,
+            )
+            return False
 
     async def delete(self, key: str) -> bool:
         """Delete key from cache."""
-        async with self._lock:
-            cache_key = self._make_key(key)
+        if not key:
+            logger.warning("Attempted to delete cache value with empty key")
+            return False
 
-            if cache_key in self._cache:
-                del self._cache[cache_key]
-                self._deletes += 1
-                return True
+        try:
+            async with self._lock:
+                cache_key = self._make_key(key)
 
+                if cache_key in self._cache:
+                    del self._cache[cache_key]
+                    self._deletes += 1
+                    return True
+
+                return False
+        except Exception as e:
+            logger.error(
+                f"Unexpected error deleting key '{key}' from memory cache: {e}",
+                extra={"key": key, "namespace": self.namespace, "error": str(e)},
+                exc_info=True,
+            )
             return False
 
     async def exists(self, key: str) -> bool:
         """Check if key exists and is not expired."""
-        async with self._lock:
-            cache_key = self._make_key(key)
+        if not key:
+            return False
 
-            if cache_key not in self._cache:
-                return False
+        try:
+            async with self._lock:
+                cache_key = self._make_key(key)
 
-            _, expiry = self._cache[cache_key]
+                if cache_key not in self._cache:
+                    return False
 
-            if self._is_expired(expiry):
-                # Remove expired entry
-                del self._cache[cache_key]
-                return False
+                _, expiry = self._cache[cache_key]
 
-            return True
+                if self._is_expired(expiry):
+                    # Remove expired entry
+                    del self._cache[cache_key]
+                    return False
+
+                return True
+        except Exception as e:
+            logger.error(
+                f"Unexpected error checking existence of key '{key}' in memory cache: {e}",
+                extra={"key": key, "namespace": self.namespace, "error": str(e)},
+                exc_info=True,
+            )
+            return False
 
     async def clear(self) -> bool:
         """Clear all entries from cache."""
-        async with self._lock:
-            self._cache.clear()
-            return True
+        try:
+            async with self._lock:
+                size = len(self._cache)
+                self._cache.clear()
+                logger.info(f"Cleared {size} entries from memory cache namespace '{self.namespace}'")
+                return True
+        except Exception as e:
+            logger.error(
+                f"Unexpected error clearing memory cache: {e}",
+                extra={"namespace": self.namespace, "error": str(e)},
+                exc_info=True,
+            )
+            return False
 
     async def get_stats(self) -> dict[str, Any]:
         """Get cache statistics."""
@@ -177,31 +239,45 @@ class MemoryCacheBackend(CacheInterface):
 
     async def close(self) -> None:
         """Close cache and release resources."""
-        # Memory backend doesn't need cleanup - data persists
-        pass
+        # Memory backend doesn't need cleanup - data persists in-process
+        logger.debug(f"Memory cache backend closed for namespace '{self.namespace}'")
 
     async def get_many(self, keys: list[str]) -> dict[str, Any]:
         """Retrieve multiple values efficiently."""
-        async with self._lock:
-            result = {}
+        if not keys:
+            return {}
 
-            for key in keys:
-                cache_key = self._make_key(key)
+        try:
+            async with self._lock:
+                result = {}
 
-                if cache_key in self._cache:
-                    value, expiry = self._cache[cache_key]
+                for key in keys:
+                    if not key:
+                        continue
 
-                    if not self._is_expired(expiry):
-                        result[key] = value
-                        self._cache.move_to_end(cache_key)
-                        self._hits += 1
+                    cache_key = self._make_key(key)
+
+                    if cache_key in self._cache:
+                        value, expiry = self._cache[cache_key]
+
+                        if not self._is_expired(expiry):
+                            result[key] = value
+                            self._cache.move_to_end(cache_key)
+                            self._hits += 1
+                        else:
+                            del self._cache[cache_key]
+                            self._misses += 1
                     else:
-                        del self._cache[cache_key]
                         self._misses += 1
-                else:
-                    self._misses += 1
 
-            return result
+                return result
+        except Exception as e:
+            logger.error(
+                f"Unexpected error getting multiple keys from memory cache: {e}",
+                extra={"key_count": len(keys), "namespace": self.namespace, "error": str(e)},
+                exc_info=True,
+            )
+            return {}
 
     async def set_many(
         self,
@@ -209,41 +285,69 @@ class MemoryCacheBackend(CacheInterface):
         ttl: int | None = None,
     ) -> int:
         """Store multiple values efficiently."""
-        async with self._lock:
-            count = 0
+        if not items:
+            return 0
 
-            # Calculate expiry once
-            if ttl is None:
-                ttl = self.default_ttl
+        try:
+            async with self._lock:
+                count = 0
 
-            expiry = time.time() + ttl if ttl > 0 else None
+                # Calculate expiry once
+                if ttl is None:
+                    ttl = self.default_ttl
 
-            for key, value in items.items():
-                cache_key = self._make_key(key)
+                expiry = time.time() + ttl if ttl > 0 else None
 
-                # Evict if needed
-                if cache_key not in self._cache and len(self._cache) >= self.max_size:
-                    self._cache.popitem(last=False)
-                    self._evictions += 1
+                for key, value in items.items():
+                    if not key:
+                        continue
 
-                self._cache[cache_key] = (value, expiry)
-                self._cache.move_to_end(cache_key)
-                self._sets += 1
-                count += 1
+                    cache_key = self._make_key(key)
 
-            return count
+                    # Evict if needed
+                    if cache_key not in self._cache and len(self._cache) >= self.max_size:
+                        self._cache.popitem(last=False)
+                        self._evictions += 1
+
+                    self._cache[cache_key] = (value, expiry)
+                    self._cache.move_to_end(cache_key)
+                    self._sets += 1
+                    count += 1
+
+                return count
+        except Exception as e:
+            logger.error(
+                f"Unexpected error setting multiple keys in memory cache: {e}",
+                extra={"key_count": len(items), "namespace": self.namespace, "ttl": ttl, "error": str(e)},
+                exc_info=True,
+            )
+            return 0
 
     async def delete_many(self, keys: list[str]) -> int:
         """Delete multiple keys efficiently."""
-        async with self._lock:
-            count = 0
+        if not keys:
+            return 0
 
-            for key in keys:
-                cache_key = self._make_key(key)
+        try:
+            async with self._lock:
+                count = 0
 
-                if cache_key in self._cache:
-                    del self._cache[cache_key]
-                    self._deletes += 1
-                    count += 1
+                for key in keys:
+                    if not key:
+                        continue
 
-            return count
+                    cache_key = self._make_key(key)
+
+                    if cache_key in self._cache:
+                        del self._cache[cache_key]
+                        self._deletes += 1
+                        count += 1
+
+                return count
+        except Exception as e:
+            logger.error(
+                f"Unexpected error deleting multiple keys from memory cache: {e}",
+                extra={"key_count": len(keys), "namespace": self.namespace, "error": str(e)},
+                exc_info=True,
+            )
+            return 0

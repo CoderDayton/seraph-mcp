@@ -15,6 +15,7 @@ import contextvars
 import json
 import logging
 import time
+from collections.abc import Generator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -180,7 +181,7 @@ class ObservabilityAdapter:
         )
 
     @contextmanager
-    def trace(self, span_name: str, tags: dict[str, str] | None = None):
+    def trace(self, span_name: str, tags: dict[str, str] | None = None) -> Generator[None, None, None]:
         """
         Context manager for tracing a span.
 
@@ -321,7 +322,7 @@ class JSONFormatter(logging.Formatter):
 
         # Add any extra fields
         if hasattr(record, "extra") and isinstance(getattr(record, "extra", None), dict):
-            log_data.update(record.extra)  # type: ignore[attr-defined]
+            log_data.update(record.extra)
 
         # Add exception info if present
         if record.exc_info:

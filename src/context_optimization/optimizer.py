@@ -11,6 +11,7 @@ Target: <100ms processing, >=90% quality, 20-40% token reduction
 
 import asyncio
 import hashlib
+import logging
 import time
 from typing import Any
 
@@ -19,6 +20,8 @@ import tiktoken
 from .config import ContextOptimizationConfig
 from .models import FeedbackRecord, OptimizationResult
 from .seraph_compression import CompressionResult, SeraphCompressor
+
+logger = logging.getLogger(__name__)
 
 # Optimization prompt based on LLMLingua and 2025 research
 OPTIMIZATION_PROMPT = """You are an expert at compressing text while preserving all important information and meaning.
@@ -464,8 +467,8 @@ class ContextOptimizer:
         if self.encoding:
             try:
                 return len(self.encoding.encode(content))
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"Failed to encode content with tiktoken: {e}")
 
         # Approximate: ~4 chars per token
         return len(content) // 4
@@ -495,7 +498,8 @@ class ContextOptimizer:
     def _update_stats(self, result: OptimizationResult):
         """Update running statistics"""
         total_opts = self.stats["total_optimizations"]
-        assert isinstance(total_opts, int)
+        if not isinstance(total_opts, int):
+            raise TypeError(f"total_optimizations must be int, got {type(total_opts)}")
         self.stats["total_optimizations"] = total_opts + 1
 
         # Track method usage
@@ -506,23 +510,26 @@ class ContextOptimizer:
 
         if result.validation_passed and not result.rollback_occurred:
             successful_opts = self.stats["successful_optimizations"]
-            assert isinstance(successful_opts, int)
+            if not isinstance(successful_opts, int):
+                raise TypeError(f"successful_optimizations must be int, got {type(successful_opts)}")
             self.stats["successful_optimizations"] = successful_opts + 1
 
             total_saved = self.stats["total_tokens_saved"]
-            assert isinstance(total_saved, int)
+            if not isinstance(total_saved, int):
+                raise TypeError(f"total_tokens_saved must be int, got {type(total_saved)}")
             self.stats["total_tokens_saved"] = total_saved + result.tokens_saved
 
             # Running average for quality
             n = self.stats["successful_optimizations"]
-            assert isinstance(n, int)
             current_avg_quality = self.stats["avg_quality_score"]
-            assert isinstance(current_avg_quality, float)
+            if not isinstance(current_avg_quality, float):
+                raise TypeError(f"avg_quality_score must be float, got {type(current_avg_quality)}")
             self.stats["avg_quality_score"] = (current_avg_quality * (n - 1) + result.quality_score) / n
 
             # Running average for reduction
             current_avg_reduction = self.stats["avg_reduction_percentage"]
-            assert isinstance(current_avg_reduction, float)
+            if not isinstance(current_avg_reduction, float):
+                raise TypeError(f"avg_reduction_percentage must be float, got {type(current_avg_reduction)}")
             self.stats["avg_reduction_percentage"] = (current_avg_reduction * (n - 1) + result.reduction_percentage) / n
 
     async def _store_feedback(self, result: OptimizationResult):
@@ -553,8 +560,10 @@ class ContextOptimizer:
         """Get current optimization statistics"""
         total_opts = self.stats["total_optimizations"]
         successful_opts = self.stats["successful_optimizations"]
-        assert isinstance(total_opts, int | float)
-        assert isinstance(successful_opts, int | float)
+        if not isinstance(total_opts, int | float):
+            raise TypeError(f"total_optimizations must be int or float, got {type(total_opts)}")
+        if not isinstance(successful_opts, int | float):
+            raise TypeError(f"successful_optimizations must be int or float, got {type(successful_opts)}")
 
         success_rate = successful_opts / total_opts if total_opts > 0 else 0.0
 

@@ -103,7 +103,7 @@ class ModelsDevClient:
         try:
             response = await self._client.get(self.API_URL)
             response.raise_for_status()
-            return response.json()
+            return response.json()  # type: ignore[no-any-return]
         except httpx.HTTPError as e:
             raise RuntimeError(f"Failed to fetch models.dev API: {e}") from e
         except Exception as e:

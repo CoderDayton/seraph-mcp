@@ -64,10 +64,25 @@ def _create_redis_cache(config: CacheConfig) -> CacheInterface:
     # Lazy import to avoid hard dependency when memory backend is used
     try:
         from .backends.redis import RedisCacheBackend  # type: ignore
-    except Exception as e:
+    except ImportError as e:
+        logger.error(
+            "Redis backend selected but redis client is not installed",
+            extra={"package": "redis>=5.0.0", "error": str(e)},
+        )
         raise ConfigurationError(
-            "Redis backend selected but redis client is unavailable. Install the 'redis' package (v4+).",
-            details={"package": "redis>=4.0.0", "error": str(e)},
+            "Redis backend selected but redis client is unavailable. "
+            "Install with: pip install 'redis>=5.0.0' or add to dependencies.",
+            details={"package": "redis>=5.0.0", "error": str(e), "backend": "redis"},
+        ) from e
+    except Exception as e:
+        logger.error(
+            "Failed to import Redis backend module",
+            extra={"error": str(e)},
+            exc_info=True,
+        )
+        raise ConfigurationError(
+            f"Failed to load Redis backend: {e}",
+            details={"package": "redis", "error": str(e), "backend": "redis"},
         ) from e
 
     return RedisCacheBackend(
@@ -141,15 +156,29 @@ def create_cache(
 
         return cache
 
+    except ConfigurationError:
+        # Re-raise configuration errors as-is (already logged)
+        raise
     except Exception as e:
         logger.error(
-            "Failed to create cache instance '%s': %s",
+            "Unexpected error creating cache instance '%s': %s",
             name,
             e,
-            extra={"cache_name": name, "error": str(e)},
+            extra={
+                "cache_name": name,
+                "backend": str(config.backend) if config else "unknown",
+                "error": str(e),
+            },
             exc_info=True,
         )
-        raise
+        raise ConfigurationError(
+            f"Failed to create cache instance '{name}': {e}",
+            details={
+                "cache_name": name,
+                "backend": str(config.backend) if config else "unknown",
+                "error": str(e),
+            },
+        ) from e
 
 
 def get_cache(name: str = "default") -> CacheInterface:

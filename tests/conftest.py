@@ -17,6 +17,8 @@ from redis.asyncio import Redis
 # Set test environment
 os.environ["ENVIRONMENT"] = "test"
 os.environ["LOG_LEVEL"] = "DEBUG"
+# Ensure memory backend by default (prevent Redis auto-detection)
+os.environ.setdefault("CACHE_BACKEND", "memory")
 
 
 # Redis availability checker
@@ -130,6 +132,24 @@ def sample_cache_data() -> dict[str, Any]:
             {"id": 2, "name": "Bob"},
         ],
     }
+
+
+@pytest.fixture(autouse=True)  # type: ignore[misc]
+def reset_config() -> Generator[None, None, None]:
+    """Reset configuration singleton between tests to ensure clean state."""
+    # Import here to avoid circular imports
+    from src.config import loader
+
+    # Store original config
+    original_config = loader._config_instance
+
+    # Reset config instance before test
+    loader._config_instance = None
+
+    yield
+
+    # Restore original config after test
+    loader._config_instance = original_config
 
 
 @pytest.fixture  # type: ignore[misc]

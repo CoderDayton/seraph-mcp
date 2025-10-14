@@ -155,3 +155,40 @@ class ForbiddenError(SeraphError):
 
     def __init__(self, message: str = "Forbidden"):
         super().__init__(message, status_code=403)
+
+
+class DependencyError(SeraphError):
+    """Raised when a required dependency is missing or fails to load."""
+
+    def __init__(
+        self,
+        package: str,
+        feature: str | None = None,
+        install_hint: str | None = None,
+        details: dict[str, Any] | None = None,
+    ):
+        if feature:
+            message = f"Required dependency '{package}' is missing for {feature}"
+        else:
+            message = f"Required dependency '{package}' is missing"
+
+        if install_hint:
+            message += f". Install with: {install_hint}"
+
+        error_details = details or {}
+        error_details.update(
+            {
+                "package": package,
+                "feature": feature,
+                "install_hint": install_hint,
+            }
+        )
+
+        super().__init__(message, error_details, status_code=500)
+
+
+class CompressionError(SeraphError):
+    """Raised when compression operations fail."""
+
+    def __init__(self, message: str, details: dict[str, Any] | None = None):
+        super().__init__(message, details, status_code=500)

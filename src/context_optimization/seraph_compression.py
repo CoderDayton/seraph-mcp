@@ -9,11 +9,11 @@ Tier-1  (500x-style): deterministic structural compressor that builds L1/L2/L3 l
 Tier-2  (LLM-DCP-inspired): dynamic context pruning that greedily selects spans
         under a token budget using importance + novelty + locality scores.
 
-Tier-3  (Hierarchical): optional LLMLingua-2 + LangChain contextual compression
-        for query-time layered retrieval; falls back to internal rules if absent.
+Tier-3  (Hierarchical): LLMLingua-2 + LangChain contextual compression
+        for query-time layered retrieval with graceful fallback.
 
-This module is self-contained and degrades gracefully if optional packages
-(tiktoken, blake3, llmlingua, langchain, sentence_transformers) are not installed.
+Required dependencies: tiktoken, blake3, llmlingua, langchain
+Optional dependencies: sentence_transformers (for semantic embeddings)
 
 Author: Seraph MCP
 License: MIT
@@ -25,6 +25,7 @@ import gzip
 import hashlib
 import itertools as it
 import json
+import logging
 import math
 import random
 import re
@@ -33,47 +34,68 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-# ---------- Optional dependencies -------------------------------------------------
+logger = logging.getLogger(__name__)
+
+# ---------- Required dependencies -------------------------------------------------
 try:
-    import tiktoken  # type: ignore[import-untyped] # noqa: F401
+    import tiktoken  # type: ignore[import-untyped]
 
     _HAS_TIKTOKEN = True
-except Exception:
+except ImportError as e:
+    logger.error(
+        "Required dependency 'tiktoken' is missing. Install with: pip install tiktoken>=0.5.0",
+        extra={"package": "tiktoken", "error": str(e)},
+    )
     tiktoken = None  # type: ignore[assignment]
     _HAS_TIKTOKEN = False
 
 try:
-    import blake3  # type: ignore[import-untyped] # noqa: F401
+    import blake3  # type: ignore[import-untyped]
 
     _HAS_BLAKE3 = True
-except Exception:
+except ImportError as e:
+    logger.error(
+        "Required dependency 'blake3' is missing. Install with: pip install blake3>=1.0.7",
+        extra={"package": "blake3", "error": str(e)},
+    )
     blake3 = None  # type: ignore[assignment]
     _HAS_BLAKE3 = False
 
 try:
-    from sentence_transformers import SentenceTransformer  # type: ignore[import-untyped] # noqa: F401
-    from sentence_transformers import util as st_util  # type: ignore[import-untyped] # noqa: F401
-
-    _HAS_EMBED = True
-except Exception:
-    SentenceTransformer = None  # type: ignore[assignment, misc]
-    st_util = None  # type: ignore[assignment]
-    _HAS_EMBED = False
-
-try:
-    # LLMLingua-2 (pip install llmlingua)
-    from llmlingua import LLMLingua  # type: ignore[import-untyped] # noqa: F401
+    from llmlingua import LLMLingua  # type: ignore[import-untyped]
 
     _HAS_LLMLINGUA = True
-except Exception:
+except ImportError as e:
+    logger.error(
+        "Required dependency 'llmlingua' is missing. Install with: pip install llmlingua>=0.2.2",
+        extra={"package": "llmlingua", "error": str(e)},
+    )
     LLMLingua = None  # type: ignore[assignment, misc]
     _HAS_LLMLINGUA = False
 
 try:
-    # LangChain contextual compression
+    # LangChain contextual compression - verify basic import works
+    import langchain  # noqa: F401  # type: ignore[import-untyped]
+
     _HAS_LANGCHAIN = True
-except Exception:
+except ImportError as e:
+    logger.error(
+        "Required dependency 'langchain' is missing. Install with: pip install langchain>=0.3.27",
+        extra={"package": "langchain", "error": str(e)},
+    )
     _HAS_LANGCHAIN = False
+
+# ---------- Optional dependencies -------------------------------------------------
+try:
+    from sentence_transformers import SentenceTransformer  # type: ignore[import-untyped]
+    from sentence_transformers import util as st_util  # type: ignore[import-untyped]
+
+    _HAS_EMBED = True
+except ImportError:
+    logger.debug("Optional dependency 'sentence_transformers' not available. Semantic features disabled.")
+    SentenceTransformer = None  # type: ignore[assignment, misc]
+    st_util = None  # type: ignore[assignment]
+    _HAS_EMBED = False
 
 # ---------- Tokenization utilities ----------------------------------------------
 
@@ -85,24 +107,38 @@ def _simple_tokens(text: str) -> list[str]:
 
 
 def count_tokens(text: str, model_name: str = "cl100k_base") -> int:
-    if _HAS_TIKTOKEN and tiktoken is not None:
-        try:
-            enc = tiktoken.get_encoding(model_name)
-        except Exception:
-            enc = tiktoken.get_encoding("cl100k_base")
-        return len(enc.encode(text))
-    # Fallback: rough word-based count ~ 1.3x words
-    return math.ceil(len(_simple_tokens(text)) * 1.3)
+    if not _HAS_TIKTOKEN or tiktoken is None:
+        logger.warning(
+            "tiktoken not available, using fallback word-based token counting (less accurate)",
+            extra={"model": model_name},
+        )
+        # Fallback: rough word-based count ~ 1.3x words
+        return math.ceil(len(_simple_tokens(text)) * 1.3)
+
+    try:
+        enc = tiktoken.get_encoding(model_name)
+    except Exception as e:
+        logger.warning(
+            f"Failed to get tiktoken encoding '{model_name}', falling back to cl100k_base: {e}",
+            extra={"model": model_name, "error": str(e)},
+        )
+        enc = tiktoken.get_encoding("cl100k_base")
+    return len(enc.encode(text))
 
 
 # ---------- Hashing --------------------------------------------------------------
 
 
 def blake_hash(data: bytes) -> str:
-    if _HAS_BLAKE3 and blake3 is not None:
+    if not _HAS_BLAKE3 or blake3 is None:
+        logger.debug("blake3 not available, using hashlib.blake2s fallback")
+        return hashlib.blake2s(data).hexdigest()
+
+    try:
         return blake3.blake3(data).hexdigest()
-    # Fallback: blake2s
-    return hashlib.blake2s(data).hexdigest()
+    except Exception as e:
+        logger.warning(f"blake3 hashing failed, falling back to blake2s: {e}", extra={"error": str(e)})
+        return hashlib.blake2s(data).hexdigest()
 
 
 # ---------- SimHash (64-bit) for near-dup filtering -----------------------------
@@ -547,64 +583,201 @@ class SeraphCompressor:
     """
 
     def __init__(self, seed: int = 7):
+        """
+        Initialize SeraphCompressor with all three tiers.
+
+        Args:
+            seed: Random seed for deterministic compression
+
+        Raises:
+            RuntimeError: If critical dependencies are missing
+        """
+        # Check critical dependencies
+        missing_deps = []
+        if not _HAS_TIKTOKEN:
+            missing_deps.append("tiktoken>=0.5.0")
+        if not _HAS_BLAKE3:
+            missing_deps.append("blake3>=1.0.7")
+
+        if missing_deps:
+            error_msg = f"Cannot initialize SeraphCompressor: missing required dependencies: {', '.join(missing_deps)}"
+            logger.critical(error_msg, extra={"missing_dependencies": missing_deps})
+            raise RuntimeError(error_msg)
+
         self.t1 = Tier1500x(seed=seed)
         self.t2 = Tier2DCP()
         self.t3 = Tier3Hierarchical()
 
-    def build(self, corpus_text: str) -> CompressionResult:
-        tier1 = self.t1.build_layers(corpus_text)
-        l3_concat = " ".join([s["text"] for s in tier1["L3"]])
-        # Tier-2 prune L3 down to a compact capsule (approx 15% of L3 or 0.15*total)
-        dcp_budget = max(256, int(count_tokens(corpus_text) * 0.08))
-        dcp = self.t2.compress(l3_concat, max_tokens=dcp_budget)
-        # Merge with Tier-3 (optional enrich)
-        hcomp = self.t3.build_hierarchical(dcp if dcp else l3_concat)
-        manifest = {
-            "tier1": tier1["manifest"],
-            "tier2": {"budget_tokens": dcp_budget, "dcp_tokens": count_tokens(dcp)},
-            "tier3": {"method": "LLMLingua-2" if _HAS_LLMLINGUA else "fallback"},
-        }
-        return CompressionResult(
-            l1=(tier1["L1"] or hcomp["L1"]),
-            l2=(tier1["L2"] or hcomp["L2"]),
-            l3=(hcomp["L3"] or l3_concat),
-            manifest=manifest,
+        logger.info(
+            "SeraphCompressor initialized",
+            extra={
+                "seed": seed,
+                "tiktoken": _HAS_TIKTOKEN,
+                "blake3": _HAS_BLAKE3,
+                "llmlingua": _HAS_LLMLINGUA,
+                "langchain": _HAS_LANGCHAIN,
+                "embeddings": _HAS_EMBED,
+            },
         )
 
-    # very small in-file retriever over L3 using BM25
+    def build(self, corpus_text: str) -> CompressionResult:
+        """
+        Build compressed layers from corpus text.
+
+        Args:
+            corpus_text: Input text to compress
+
+        Returns:
+            CompressionResult with L1/L2/L3 layers and manifest
+
+        Raises:
+            ValueError: If corpus_text is not a string
+            RuntimeError: If compression fails critically
+        """
+        try:
+            tier1 = self.t1.build_layers(corpus_text)
+            l3_concat = " ".join([s["text"] for s in tier1["L3"]])
+
+            # Tier-2 prune L3 down to a compact capsule (approx 15% of L3 or 0.15*total)
+            dcp_budget = max(256, int(count_tokens(corpus_text) * 0.08))
+            dcp = self.t2.compress(l3_concat, max_tokens=dcp_budget)
+
+            # Merge with Tier-3 (optional enrich)
+            hcomp = self.t3.build_hierarchical(dcp if dcp else l3_concat)
+
+            manifest = {
+                "tier1": tier1["manifest"],
+                "tier2": {"budget_tokens": dcp_budget, "dcp_tokens": count_tokens(dcp)},
+                "tier3": {"method": "LLMLingua-2" if _HAS_LLMLINGUA else "fallback"},
+            }
+
+            result = CompressionResult(
+                l1=(tier1["L1"] or hcomp["L1"]),
+                l2=(tier1["L2"] or hcomp["L2"]),
+                l3=(hcomp["L3"] or l3_concat),
+                manifest=manifest,
+            )
+
+            logger.debug(
+                "Compression complete",
+                extra={
+                    "original_tokens": count_tokens(corpus_text),
+                    "l1_tokens": count_tokens(result.l1),
+                    "l2_tokens": count_tokens(result.l2),
+                    "l3_tokens": count_tokens(result.l3),
+                },
+            )
+
+            return result
+
+        except Exception as e:
+            logger.error(f"Compression failed: {e}", extra={"error": str(e)}, exc_info=True)
+            raise RuntimeError(f"Failed to build compression layers: {e}") from e
+
     def query(self, result: CompressionResult, question: str, k: int = 5) -> list[tuple[float, str]]:
-        sents = re.split(r"(?<=[.!?])\s+", result.l3)
-        docs = [[*_simple_tokens(s)] for s in sents]
-        bm = BM25(docs if docs else [[]])
-        q = _simple_tokens(question)
-        scored = [(bm.score(q, i), s) for i, s in enumerate(sents) if s.strip()]
-        scored.sort(key=lambda x: -x[0])
-        return scored[:k]
+        """
+        Query compressed result using BM25 retrieval over L3 layer.
+
+        Args:
+            result: CompressionResult to query
+            question: Query text
+            k: Number of top results to return
+
+        Returns:
+            List of (score, text) tuples, sorted by relevance
+
+        Raises:
+            ValueError: If question is invalid
+        """
+        try:
+            # Handle empty question gracefully by returning empty results
+            if not question:
+                return []
+            sents = re.split(r"(?<=[.!?])\s+", result.l3)
+            docs = [[*_simple_tokens(s)] for s in sents]
+            bm = BM25(docs if docs else [[]])
+            q = _simple_tokens(question)
+            scored = [(bm.score(q, i), s) for i, s in enumerate(sents) if s.strip()]
+            scored.sort(key=lambda x: -x[0])
+            return scored[:k]
+        except Exception as e:
+            logger.error(f"Query failed: {e}", extra={"question": question, "error": str(e)}, exc_info=True)
+            raise RuntimeError(f"Failed to query compression result: {e}") from e
 
     def pack(self, res: CompressionResult, out_path: str) -> str:
-        payload = {"manifest": res.manifest, "L1": res.l1, "L2": res.l2, "L3": res.l3}
-        out_path = str(out_path)
-        with gzip.open(out_path, "wt", encoding="utf-8") as f:
-            json.dump(payload, f, ensure_ascii=False, indent=2)
-        return out_path
+        """
+        Pack compression result to gzipped JSON file.
+
+        Args:
+            res: CompressionResult to pack
+            out_path: Output file path
+
+        Returns:
+            Absolute path to packed file
+
+        Raises:
+            ValueError: If out_path is invalid
+            IOError: If file writing fails
+        """
+        if not out_path:
+            raise ValueError("out_path cannot be empty")
+
+        try:
+            payload = {"manifest": res.manifest, "L1": res.l1, "L2": res.l2, "L3": res.l3}
+            out_path = str(out_path)
+
+            with gzip.open(out_path, "wt", encoding="utf-8") as f:
+                json.dump(payload, f, ensure_ascii=False, indent=2)
+
+            logger.info(f"Packed compression result to {out_path}")
+            return out_path
+
+        except OSError as e:
+            logger.error(
+                f"Failed to pack compression result: {e}", extra={"path": out_path, "error": str(e)}, exc_info=True
+            )
+            raise OSError(f"Failed to write packed file to {out_path}: {e}") from e
 
 
 # ---------- CLI -----------------------------------------------------------------
 
 
 def _read_text_from_path(p: str) -> str:
+    """
+    Read text from file or directory path.
+
+    Args:
+        p: File or directory path
+
+    Returns:
+        Concatenated text content
+
+    Raises:
+        FileNotFoundError: If path doesn't exist
+        IOError: If reading fails
+    """
     path = Path(p)
-    if path.is_dir():
-        buf = []
-        for f in sorted(path.rglob("*")):
-            if f.suffix.lower() in {".txt", ".md", ".rst", ".log"} and f.is_file():
-                try:
-                    buf.append(f.read_text(encoding="utf-8", errors="ignore"))
-                except Exception:
-                    pass
-        return "\n\n".join(buf)
-    else:
-        return path.read_text(encoding="utf-8", errors="ignore")
+
+    if not path.exists():
+        raise FileNotFoundError(f"Path does not exist: {p}")
+
+    try:
+        if path.is_dir():
+            buf = []
+            for f in sorted(path.rglob("*")):
+                if f.suffix.lower() in {".txt", ".md", ".rst", ".log"} and f.is_file():
+                    try:
+                        buf.append(f.read_text(encoding="utf-8", errors="ignore"))
+                    except Exception as e:
+                        logger.warning(f"Failed to read file {f}: {e}", extra={"file": str(f), "error": str(e)})
+            if not buf:
+                logger.warning(f"No readable text files found in directory: {p}")
+            return "\n\n".join(buf)
+        else:
+            return path.read_text(encoding="utf-8", errors="ignore")
+    except OSError as e:
+        logger.error(f"Failed to read text from path {p}: {e}", exc_info=True)
+        raise OSError(f"Failed to read text from {p}: {e}") from e
 
 
 def main(argv: list[str] | None = None) -> None:

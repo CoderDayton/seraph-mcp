@@ -12,8 +12,17 @@ Per SDD.md:
 - Comprehensive error handling
 """
 
+import logging
 import time
 from typing import Any
+
+from .base import (
+    BaseProvider,
+    CompletionRequest,
+    CompletionResponse,
+    ModelInfo,
+    ProviderConfig,
+)
 
 try:
     import openai
@@ -25,13 +34,7 @@ except ImportError:
     AsyncOpenAI = None  # type: ignore[assignment, misc]
     OPENAI_AVAILABLE = False
 
-from .base import (
-    BaseProvider,
-    CompletionRequest,
-    CompletionResponse,
-    ModelInfo,
-    ProviderConfig,
-)
+logger = logging.getLogger(__name__)
 
 
 class OpenAICompatibleProvider(BaseProvider):
@@ -222,8 +225,8 @@ class OpenAICompatibleProvider(BaseProvider):
                     models = [ModelInfo.from_models_dev(model_info) for model_info in provider.models.values()]
                     self._models_cache = models
                     return models
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"Failed to fetch models from Models.dev for provider {provider_id}: {e}")
 
         # Fallback: try to fetch models from the endpoint directly
         try:
@@ -266,8 +269,8 @@ class OpenAICompatibleProvider(BaseProvider):
                 model_info = await self._models_dev_client.get_model(provider_id, model_id)
                 if model_info:
                     return ModelInfo.from_models_dev(model_info)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"Failed to get model info from Models.dev for {model_id}: {e}")
 
         # Try from cached/fetched models
         models = await self.list_models()
@@ -300,8 +303,8 @@ class OpenAICompatibleProvider(BaseProvider):
                 cost = await self._models_dev_client.estimate_cost(provider_id, model_id, input_tokens, output_tokens)
                 if cost > 0:
                     return cost
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"Failed to estimate cost from Models.dev: {e}")
 
         # Fallback: assumes free for undetected providers
         return 0.0

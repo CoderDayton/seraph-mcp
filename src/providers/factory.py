@@ -83,12 +83,34 @@ class ProviderFactory:
             instance = provider_class(config)
             self._instances[cache_key] = instance
 
-            logger.info(f"Created {provider_name} provider instance (enabled={config.enabled})")
+            logger.info(
+                f"Created {provider_name} provider instance (enabled={config.enabled})",
+                extra={"provider": provider_name, "enabled": config.enabled, "has_api_key": bool(config.api_key)},
+            )
 
             return instance
 
+        except KeyError as e:
+            # This should never happen due to earlier check, but handle defensively
+            logger.error(
+                f"Provider class not found for {provider_name}",
+                extra={"provider": provider_name, "error": str(e)},
+                exc_info=True,
+            )
+            raise RuntimeError(f"Provider implementation not found: {provider_name}") from e
+        except TypeError as e:
+            logger.error(
+                f"Invalid configuration for {provider_name} provider: {e}",
+                extra={"provider": provider_name, "config_keys": list(config.model_dump().keys()), "error": str(e)},
+                exc_info=True,
+            )
+            raise RuntimeError(f"Invalid configuration for {provider_name}: {e}") from e
         except Exception as e:
-            logger.error(f"Failed to create {provider_name} provider: {e}")
+            logger.error(
+                f"Failed to create {provider_name} provider: {e}",
+                extra={"provider": provider_name, "error": str(e)},
+                exc_info=True,
+            )
             raise RuntimeError(f"Failed to create {provider_name} provider: {e}") from e
 
     def get_provider(self, provider_name: str) -> BaseProvider | None:
@@ -120,14 +142,26 @@ class ProviderFactory:
 
     async def close_all(self) -> None:
         """Close all provider instances and clean up resources."""
+        if not self._instances:
+            logger.debug("No providers to close")
+            return
+
+        errors = []
         for provider in self._instances.values():
             try:
                 await provider.close()
+                logger.debug(f"Closed provider: {provider.name}")
             except Exception as e:
-                logger.warning(f"Error closing provider {provider.name}: {e}")
+                error_msg = f"Error closing provider {provider.name}: {e}"
+                logger.error(error_msg, extra={"provider": provider.name, "error": str(e)}, exc_info=True)
+                errors.append(error_msg)
 
         self._instances.clear()
-        logger.info("All providers closed")
+
+        if errors:
+            logger.warning(f"Closed all providers with {len(errors)} error(s)")
+        else:
+            logger.info("All providers closed successfully")
 
     def reset(self) -> None:
         """Reset the factory (clear all instances without closing them)."""

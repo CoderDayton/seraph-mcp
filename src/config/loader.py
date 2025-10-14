@@ -10,7 +10,9 @@ import os
 from pathlib import Path
 
 from dotenv import load_dotenv
+from pydantic import ValidationError
 
+from ..errors import ConfigurationError
 from .schemas import SeraphConfig
 
 logger = logging.getLogger(__name__)
@@ -48,9 +50,20 @@ def load_config(
 
     if env_path.exists():
         logger.info(f"Loading environment from {env_path}")
-        load_dotenv(env_path, override=True)
+        try:
+            load_dotenv(env_path, override=True)
+        except Exception as e:
+            logger.error(
+                f"Failed to load .env file from {env_path}: {e}",
+                extra={"path": str(env_path), "error": str(e)},
+                exc_info=True,
+            )
+            raise ConfigurationError(
+                f"Failed to load environment file: {e}",
+                details={"path": str(env_path), "error": str(e)},
+            ) from e
     else:
-        logger.info("No .env file found, using environment variables only")
+        logger.debug("No .env file found, using environment variables only")
 
     # Build configuration from environment variables
     # Auto-detect cache backend: Redis if REDIS_URL is set, else memory
@@ -86,8 +99,10 @@ def load_config(
         },
         "budget": {
             "enable_budget_enforcement": os.getenv("ENABLE_BUDGET_ENFORCEMENT", "false").lower() == "true",
-            "daily_budget_limit": float(os.getenv("DAILY_BUDGET_LIMIT")) if os.getenv("DAILY_BUDGET_LIMIT") else None,
-            "monthly_budget_limit": float(os.getenv("MONTHLY_BUDGET_LIMIT"))
+            "daily_budget_limit": float(os.getenv("DAILY_BUDGET_LIMIT", "0"))
+            if os.getenv("DAILY_BUDGET_LIMIT")
+            else None,
+            "monthly_budget_limit": float(os.getenv("MONTHLY_BUDGET_LIMIT", "0"))
             if os.getenv("MONTHLY_BUDGET_LIMIT")
             else None,
             "alert_thresholds": [
@@ -143,12 +158,32 @@ def load_config(
     }
 
     try:
-        _config_instance = SeraphConfig(**config_dict)
-        logger.info(f"Configuration loaded successfully (environment: {_config_instance.environment})")
+        _config_instance = SeraphConfig(**config_dict)  # type: ignore[arg-type]
+        logger.info(
+            f"Configuration loaded successfully (environment: {_config_instance.environment})",
+            extra={"environment": _config_instance.environment, "cache_backend": _config_instance.cache.backend},
+        )
         return _config_instance
+    except ValidationError as e:
+        logger.error(
+            f"Configuration validation failed: {e}",
+            extra={"validation_errors": e.errors(), "config_dict_keys": list(config_dict.keys())},
+            exc_info=True,
+        )
+        raise ConfigurationError(
+            "Configuration validation failed. Check your environment variables and configuration.",
+            details={"validation_errors": e.errors()},
+        ) from e
     except Exception as e:
-        logger.error(f"Configuration validation failed: {e}")
-        raise
+        logger.error(
+            f"Unexpected error loading configuration: {e}",
+            extra={"error": str(e)},
+            exc_info=True,
+        )
+        raise ConfigurationError(
+            f"Failed to load configuration: {e}",
+            details={"error": str(e)},
+        ) from e
 
 
 def get_config() -> SeraphConfig:

@@ -12,6 +12,8 @@ Per SDD.md:
 - Dynamic model loading from Models.dev
 """
 
+import asyncio
+import logging
 import time
 from typing import Any
 
@@ -25,6 +27,7 @@ except ImportError:
     AsyncAnthropic = None  # type: ignore[assignment, misc]
     ANTHROPIC_AVAILABLE = False
 
+from ..errors import DependencyError, ProviderError, ProviderRateLimitError, ProviderTimeoutError
 from .base import (
     BaseProvider,
     CompletionRequest,
@@ -32,36 +35,81 @@ from .base import (
     ProviderConfig,
 )
 
+logger = logging.getLogger(__name__)
+
 
 class AnthropicProvider(BaseProvider):
     """Anthropic (Claude) API provider implementation with dynamic model loading."""
 
     def __init__(self, config: ProviderConfig) -> None:
-        """Initialize Anthropic provider."""
+        """
+        Initialize Anthropic provider.
+
+        Args:
+            config: Provider configuration
+
+        Raises:
+            DependencyError: If Anthropic SDK is not installed
+            ValueError: If configuration is invalid
+        """
         super().__init__(config)
 
         if not ANTHROPIC_AVAILABLE or AsyncAnthropic is None:
-            raise RuntimeError("Anthropic SDK not available. Install with: pip install anthropic>=0.25.0")
+            logger.error("Anthropic SDK is not installed", extra={"package": "anthropic", "provider": "anthropic"})
+            raise DependencyError(
+                package="anthropic",
+                feature="Anthropic provider",
+                install_hint="pip install 'anthropic>=0.25.0'",
+                details={"provider": "anthropic"},
+            )
 
-        # Initialize async client
-        client_kwargs: dict[str, Any] = {
-            "api_key": config.api_key,
-            "timeout": config.timeout,
-            "max_retries": config.max_retries,
-        }
+        try:
+            # Initialize async client
+            client_kwargs: dict[str, Any] = {
+                "api_key": config.api_key,
+                "timeout": config.timeout,
+                "max_retries": config.max_retries,
+            }
 
-        if config.base_url:
-            client_kwargs["base_url"] = config.base_url
+            if config.base_url:
+                client_kwargs["base_url"] = config.base_url
 
-        self.client = AsyncAnthropic(**client_kwargs)
+            self.client = AsyncAnthropic(**client_kwargs)
+
+            logger.info(
+                "Anthropic provider initialized",
+                extra={
+                    "provider": "anthropic",
+                    "base_url": config.base_url or "default",
+                    "timeout": config.timeout,
+                    "max_retries": config.max_retries,
+                },
+            )
+        except Exception as e:
+            logger.error(
+                f"Failed to initialize Anthropic client: {e}",
+                extra={"provider": "anthropic", "error": str(e)},
+                exc_info=True,
+            )
+            raise RuntimeError(f"Failed to initialize Anthropic provider: {e}") from e
 
     def _validate_config(self) -> None:
-        """Validate Anthropic-specific configuration."""
+        """
+        Validate Anthropic-specific configuration.
+
+        Raises:
+            ValueError: If configuration is invalid
+        """
         if not self.config.api_key:
-            raise ValueError("Anthropic API key is required")
+            logger.error("Anthropic API key is missing", extra={"provider": "anthropic"})
+            raise ValueError("Anthropic API key is required. Set ANTHROPIC_API_KEY environment variable.")
 
         if len(self.config.api_key) < 20:
-            raise ValueError("Invalid Anthropic API key format")
+            logger.error(
+                "Anthropic API key has invalid format",
+                extra={"provider": "anthropic", "key_length": len(self.config.api_key)},
+            )
+            raise ValueError("Invalid Anthropic API key format. Anthropic keys should be at least 20 characters.")
 
     @property
     def name(self) -> str:
@@ -103,8 +151,26 @@ class AnthropicProvider(BaseProvider):
         return None
 
     async def complete(self, request: CompletionRequest) -> CompletionResponse:
-        """Generate completion using Anthropic API."""
+        """
+        Generate completion using Anthropic API.
+
+        Args:
+            request: Completion request parameters
+
+        Returns:
+            CompletionResponse with generated content and metadata
+
+        Raises:
+            RuntimeError: If provider is disabled
+            ProviderError: If API call fails
+            ProviderRateLimitError: If rate limit is exceeded
+            ProviderTimeoutError: If request times out
+        """
         if not self.config.enabled:
+            logger.warning(
+                f"Attempted to use disabled provider: {self.name}",
+                extra={"provider": self.name, "model": request.model},
+            )
             raise RuntimeError(f"Provider {self.name} is disabled")
 
         start_time = time.time()
@@ -130,6 +196,18 @@ class AnthropicProvider(BaseProvider):
             extra = getattr(request, "extra", None)
             if extra and isinstance(extra, dict):
                 api_params.update(extra)
+
+            logger.debug(
+                f"Calling Anthropic API with model {request.model}",
+                extra={
+                    "provider": self.name,
+                    "model": request.model,
+                    "temperature": request.temperature,
+                    "max_tokens": api_params["max_tokens"],
+                    "message_count": len(converted_messages),
+                    "has_system": bool(system_message),
+                },
+            )
 
             # Make API call
             response = await self.client.messages.create(**api_params)
@@ -159,6 +237,18 @@ class AnthropicProvider(BaseProvider):
 
             latency_ms = (time.time() - start_time) * 1000
 
+            logger.info(
+                "Anthropic completion successful",
+                extra={
+                    "provider": self.name,
+                    "model": request.model,
+                    "latency_ms": latency_ms,
+                    "total_tokens": usage["total_tokens"],
+                    "finish_reason": finish_reason,
+                    "cost_usd": cost,
+                },
+            )
+
             return CompletionResponse(
                 content=content,
                 model=request.model,
@@ -169,30 +259,109 @@ class AnthropicProvider(BaseProvider):
                 cost_usd=cost,
             )
 
+        except TimeoutError as e:
+            logger.error(
+                f"Anthropic API request timed out after {self.config.timeout}s",
+                extra={
+                    "provider": self.name,
+                    "model": request.model,
+                    "timeout": self.config.timeout,
+                },
+                exc_info=True,
+            )
+            raise ProviderTimeoutError(self.name, self.config.timeout) from e
+
         except Exception as e:
             if anthropic is not None:
                 if isinstance(e, anthropic.AuthenticationError):
-                    raise RuntimeError(f"Anthropic authentication failed: {e}") from e
+                    logger.error(
+                        f"Anthropic authentication failed: {e}",
+                        extra={"provider": self.name, "error": str(e)},
+                        exc_info=True,
+                    )
+                    raise ProviderError(
+                        "Anthropic authentication failed. Check your API key.",
+                        details={"provider": self.name, "error": str(e)},
+                    ) from e
+
                 elif isinstance(e, anthropic.RateLimitError):
-                    raise RuntimeError(f"Anthropic rate limit exceeded: {e}") from e
+                    retry_after = getattr(e, "retry_after", None)
+                    logger.warning(
+                        "Anthropic rate limit exceeded",
+                        extra={
+                            "provider": self.name,
+                            "model": request.model,
+                            "retry_after": retry_after,
+                        },
+                    )
+                    raise ProviderRateLimitError(self.name, retry_after) from e
+
                 elif isinstance(e, anthropic.APIError):
-                    raise RuntimeError(f"Anthropic API error: {e}") from e
-            raise RuntimeError(f"Unexpected error calling Anthropic: {e}") from e
+                    logger.error(
+                        f"Anthropic API error: {e}",
+                        extra={
+                            "provider": self.name,
+                            "model": request.model,
+                            "error": str(e),
+                            "status_code": getattr(e, "status_code", None),
+                        },
+                        exc_info=True,
+                    )
+                    raise ProviderError(
+                        f"Anthropic API error: {e}",
+                        details={
+                            "provider": self.name,
+                            "model": request.model,
+                            "error": str(e),
+                            "status_code": getattr(e, "status_code", None),
+                        },
+                    ) from e
+
+            logger.error(
+                f"Unexpected error calling Anthropic: {e}",
+                extra={
+                    "provider": self.name,
+                    "model": request.model,
+                    "error": str(e),
+                },
+                exc_info=True,
+            )
+            raise ProviderError(
+                f"Unexpected error calling Anthropic: {e}",
+                details={"provider": self.name, "model": request.model, "error": str(e)},
+            ) from e
 
     async def health_check(self) -> bool:
-        """Check if Anthropic API is accessible."""
+        """
+        Check if Anthropic API is accessible.
+
+        Returns:
+            True if API is accessible, False otherwise
+        """
         try:
             # Use a very short max_tokens to minimize cost
-            await self.client.messages.create(
-                model="claude-3-haiku-20240307",
-                max_tokens=10,
-                messages=[{"role": "user", "content": "ping"}],
+            await asyncio.wait_for(
+                self.client.messages.create(
+                    model="claude-3-haiku-20240307",
+                    max_tokens=10,
+                    messages=[{"role": "user", "content": "ping"}],
+                ),
+                timeout=5.0,
             )
+            logger.debug("Anthropic health check passed", extra={"provider": self.name})
             return True
-        except Exception:
+        except TimeoutError:
+            logger.warning("Anthropic health check timed out", extra={"provider": self.name, "timeout": 5.0})
+            return False
+        except Exception as e:
+            logger.warning(f"Anthropic health check failed: {e}", extra={"provider": self.name, "error": str(e)})
             return False
 
     async def close(self) -> None:
         """Clean up Anthropic client resources."""
-        if hasattr(self.client, "close"):
-            await self.client.close()
+        try:
+            if hasattr(self.client, "close"):
+                await self.client.close()
+                logger.debug("Closed Anthropic client", extra={"provider": self.name})
+        except Exception as e:
+            logger.warning(f"Error closing Anthropic client: {e}", extra={"provider": self.name, "error": str(e)})

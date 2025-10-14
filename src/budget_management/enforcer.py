@@ -13,6 +13,7 @@ Per SDD.md:
 
 import logging
 import time
+from typing import Any
 
 from .config import BudgetConfig, EnforcementMode
 from .tracker import BudgetTracker
@@ -38,12 +39,12 @@ class BudgetEnforcer:
         """
         self.config = config
         self.tracker = tracker
-        self._alert_state = {}  # Track which thresholds have been alerted
+        self._alert_state: dict[str, set[float]] = {}  # Track which thresholds have been alerted
 
     def check_budget(
         self,
         estimated_cost: float | None = None,
-    ) -> tuple[bool, dict[str, any]]:
+    ) -> tuple[bool, dict[str, Any]]:
         """
         Check if budget allows a new request.
 
@@ -132,8 +133,8 @@ class BudgetEnforcer:
         period: str,
         current_spend: float,
         limit: float,
-        status: dict[str, any],
-    ) -> tuple[bool, dict[str, any]]:
+        status: dict[str, Any],
+    ) -> tuple[bool, dict[str, Any]]:
         """Handle budget limit exceeded."""
         message = f"Budget limit exceeded: {period} spending ${current_spend:.4f} exceeds limit of ${limit:.4f}"
 
@@ -230,6 +231,16 @@ class BudgetEnforcer:
             import json
             import urllib.request
 
+            if self.config.webhook_url is None:
+                raise ValueError("webhook_url must be set for webhook alerts")
+
+            # Validate URL scheme for security (prevent file:/ or custom schemes)
+            from urllib.parse import urlparse
+
+            parsed_url = urlparse(self.config.webhook_url)
+            if parsed_url.scheme not in ("http", "https"):
+                raise ValueError(f"Invalid webhook URL scheme: {parsed_url.scheme}. Only http and https are allowed.")
+
             payload = {
                 "type": "budget_alert",
                 "message": message,
@@ -247,7 +258,7 @@ class BudgetEnforcer:
                 headers={"Content-Type": "application/json"},
             )
 
-            with urllib.request.urlopen(req, timeout=5) as response:
+            with urllib.request.urlopen(req, timeout=5) as response:  # nosec B310 - URL scheme validated above
                 if response.status == 200:
                     logger.debug("Webhook alert sent successfully")
                 else:
@@ -261,7 +272,7 @@ class BudgetEnforcer:
         self._alert_state.clear()
         logger.info("Alert state reset")
 
-    def get_budget_status(self) -> dict[str, any]:
+    def get_budget_status(self) -> dict[str, Any]:
         """
         Get current budget status.
 
