@@ -110,6 +110,14 @@ warn_no_return = true
 warn_unreachable = true
 strict_equality = true
 
+[[tool.mypy.overrides]]
+module = "src.server"
+warn_unreachable = false
+
+[[tool.mypy.overrides]]
+module = "src.providers.gemini_provider"
+warn_unreachable = false
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]

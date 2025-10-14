@@ -171,9 +171,9 @@ class GeminiProvider(BaseProvider):
             system_instruction, converted_messages = self._convert_messages_to_gemini_format(request.messages)
 
             # Prepare generation config
-            if GenerateContentConfig is None:
-                logger.error("GenerateContentConfig not available", extra={"provider": self.name})
-                raise RuntimeError("GenerateContentConfig not available - check google-genai installation")
+            # Note: GenerateContentConfig is checked at __init__ time, so this should never be None
+            # but we check defensively here for type safety
+            assert GenerateContentConfig is not None, "GenerateContentConfig not available"
             config = GenerateContentConfig(
                 temperature=request.temperature,
                 max_output_tokens=request.max_tokens or 8192,

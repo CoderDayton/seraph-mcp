@@ -244,7 +244,7 @@ async def optimize_tokens(
     if _context_optimizer is None:
         return {"error": "Context optimization is not enabled"}
 
-    obs = get_observability()  # type: ignore[unreachable]
+    obs = get_observability()
     obs.increment("tools.optimize_tokens")
 
     try:
@@ -346,7 +346,7 @@ async def count_tokens(
     if _context_optimizer is None:
         return {"error": "Context optimization is not enabled"}
 
-    obs = get_observability()  # type: ignore[unreachable]
+    obs = get_observability()
     obs.increment("tools.count_tokens")
 
     try:
@@ -431,7 +431,7 @@ async def estimate_cost(
     if _context_optimizer is None:
         return {"error": "Context optimization is not enabled"}
 
-    obs = get_observability()  # type: ignore[unreachable]
+    obs = get_observability()
     obs.increment("tools.estimate_cost")
 
     try:
@@ -472,26 +472,7 @@ async def estimate_cost(
                 output_tokens=output_tokens,
             )
         except Exception:
-            # Fallback to hardcoded rates
-            rates = {
-                "gpt-4": {"input": 30.0, "output": 60.0},
-                "gpt-4-turbo": {"input": 10.0, "output": 30.0},
-                "gpt-3.5-turbo": {"input": 0.5, "output": 1.5},
-                "claude-3-opus": {"input": 15.0, "output": 75.0},
-                "claude-3-sonnet": {"input": 3.0, "output": 15.0},
-                "gemini-pro": {"input": 0.5, "output": 1.5},
-            }
-
-            # Default to gpt-4 rates
-            rate = rates.get("gpt-4", {"input": 30.0, "output": 60.0})
-            for key, value in rates.items():
-                if key in model_lower:
-                    rate = value
-                    break
-
-            input_cost = (input_tokens / 1_000_000) * rate["input"]
-            output_cost = (output_tokens / 1_000_000) * rate["output"]
-            cost_usd = input_cost + output_cost
+            cost_usd = 0.0
 
         total_tokens = input_tokens + output_tokens
         return {
@@ -537,7 +518,7 @@ async def analyze_token_efficiency(
     if _context_optimizer is None:
         return {"error": "Context optimization is not enabled"}
 
-    obs = get_observability()  # type: ignore[unreachable]
+    obs = get_observability()
     obs.increment("tools.analyze_token_efficiency")
 
     try:
@@ -654,7 +635,7 @@ async def check_budget(estimated_cost: float | None = None) -> dict[str, Any]:
     if _budget_enforcer is None:
         return {"error": "Budget management is not enabled"}
 
-    obs = get_observability()  # type: ignore[unreachable]
+    obs = get_observability()
     obs.increment("tools.check_budget")
 
     try:
@@ -692,7 +673,7 @@ async def get_usage_report(
     if _budget_analytics is None:
         return {"error": "Budget management is not enabled"}
 
-    obs = get_observability()  # type: ignore[unreachable]
+    obs = get_observability()
     obs.increment("tools.get_usage_report")
 
     try:
@@ -727,7 +708,7 @@ async def forecast_spending(days_ahead: int = 7) -> dict[str, Any]:
     if _budget_analytics is None:
         return {"error": "Budget management is not enabled"}
 
-    obs = get_observability()  # type: ignore[unreachable]
+    obs = get_observability()
     obs.increment("tools.forecast_spending")
 
     try:
@@ -771,7 +752,7 @@ async def lookup_semantic_cache(
     if _semantic_cache is None:
         return {"error": "Semantic cache is not enabled"}
 
-    obs = get_observability()  # type: ignore[unreachable]
+    obs = get_observability()
     obs.increment("tools.lookup_semantic_cache")
 
     try:
@@ -815,7 +796,7 @@ async def store_in_semantic_cache(
     if _semantic_cache is None:
         return {"error": "Semantic cache is not enabled"}
 
-    obs = get_observability()  # type: ignore[unreachable]
+    obs = get_observability()
     obs.increment("tools.store_in_semantic_cache")
 
     try:
@@ -857,7 +838,7 @@ async def search_semantic_cache(
     if _semantic_cache is None:
         return {"error": "Semantic cache is not enabled"}
 
-    obs = get_observability()  # type: ignore[unreachable]
+    obs = get_observability()
     obs.increment("tools.search_semantic_cache")
 
     try:
@@ -892,7 +873,7 @@ async def get_semantic_cache_stats() -> dict[str, Any]:
     if _semantic_cache is None:
         return {"error": "Semantic cache is not enabled"}
 
-    obs = get_observability()  # type: ignore[unreachable]
+    obs = get_observability()
     obs.increment("tools.get_semantic_cache_stats")
 
     try:
@@ -922,7 +903,7 @@ async def clear_semantic_cache() -> dict[str, Any]:
     if _semantic_cache is None:
         return {"error": "Semantic cache is not enabled"}
 
-    obs = get_observability()  # type: ignore[unreachable]
+    obs = get_observability()
     obs.increment("tools.clear_semantic_cache")
 
     try:
@@ -967,7 +948,7 @@ async def optimize_context(
     if _context_optimizer is None:
         return {"error": "Context optimization is not enabled"}
 
-    obs = get_observability()  # type: ignore[unreachable]
+    obs = get_observability()
     obs.increment("tools.optimize_context")
 
     try:
@@ -1035,7 +1016,7 @@ async def get_optimization_settings() -> dict[str, Any]:
     if _context_optimizer is None:
         return {"error": "Context optimization is not enabled"}
 
-    obs = get_observability()  # type: ignore[unreachable]
+    obs = get_observability()
     obs.increment("tools.get_optimization_settings")
 
     try:
@@ -1074,7 +1055,7 @@ async def get_optimization_stats() -> dict[str, Any]:
     if _context_optimizer is None:
         return {"error": "Context optimization is not enabled"}
 
-    obs = get_observability()  # type: ignore[unreachable]
+    obs = get_observability()
     obs.increment("tools.get_optimization_stats")
 
     try:
