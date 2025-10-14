@@ -173,7 +173,8 @@ class GeminiProvider(BaseProvider):
             # Prepare generation config
             # Note: GenerateContentConfig is checked at __init__ time, so this should never be None
             # but we check defensively here for type safety
-            assert GenerateContentConfig is not None, "GenerateContentConfig not available"
+            if GenerateContentConfig is None:
+                raise RuntimeError("GenerateContentConfig is not available. Cannot proceed with completion.")
             config = GenerateContentConfig(
                 temperature=request.temperature,
                 max_output_tokens=request.max_tokens or 8192,
