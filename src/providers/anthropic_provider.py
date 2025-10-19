@@ -209,8 +209,13 @@ class AnthropicProvider(BaseProvider):
                 },
             )
 
-            # Make API call
-            response = await self.client.messages.create(**api_params)
+            # Determine timeout: use request timeout if provided, otherwise provider default
+            timeout = request.timeout if request.timeout is not None else self.config.timeout
+
+            # Make API call with timeout
+            import asyncio
+
+            response = await asyncio.wait_for(self.client.messages.create(**api_params), timeout=timeout)
 
             # Extract response data
             content = ""

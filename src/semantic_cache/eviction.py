@@ -27,16 +27,91 @@ import time
 from collections import deque
 from typing import Any
 
+# Try to import cachetools implementations
 try:
     from cachetools import FIFOCache, LRUCache, TTLCache
 
     CACHETOOLS_AVAILABLE = True
-except ImportError:
-    # Fallback types for type checking
-    LRUCache = dict
-    FIFOCache = dict
-    TTLCache = dict
+except ImportError:  # pragma: no cover
+    # Mark cachetools as unavailable
     CACHETOOLS_AVAILABLE = False
+
+    class LRUCache:  # type: ignore[no-redef]
+        """Fallback LRU implementation when cachetools is not available."""
+
+        def __init__(self, maxsize: int, **kwargs: Any) -> None:
+            self.maxsize = maxsize
+            self._data: dict[Any, Any] = {}
+
+        def __contains__(self, key: Any) -> bool:
+            return key in self._data
+
+        def __getitem__(self, key: Any) -> Any:
+            return self._data[key]
+
+        def __setitem__(self, key: Any, value: Any) -> None:
+            self._data[key] = value
+
+        def __delitem__(self, key: Any) -> None:
+            del self._data[key]
+
+        def clear(self) -> None:
+            self._data.clear()
+
+        def __len__(self) -> int:
+            return len(self._data)
+
+    class FIFOCache:  # type: ignore[no-redef]
+        """Fallback FIFO implementation when cachetools is not available."""
+
+        def __init__(self, maxsize: int, **kwargs: Any) -> None:
+            self.maxsize = maxsize
+            self._data: dict[Any, Any] = {}
+
+        def __contains__(self, key: Any) -> bool:
+            return key in self._data
+
+        def __getitem__(self, key: Any) -> Any:
+            return self._data[key]
+
+        def __setitem__(self, key: Any, value: Any) -> None:
+            self._data[key] = value
+
+        def __delitem__(self, key: Any) -> None:
+            del self._data[key]
+
+        def clear(self) -> None:
+            self._data.clear()
+
+        def __len__(self) -> int:
+            return len(self._data)
+
+    class TTLCache:  # type: ignore[no-redef]
+        """Fallback TTL implementation when cachetools is not available."""
+
+        def __init__(self, maxsize: int, ttl: int = 0, **kwargs: Any) -> None:
+            self.maxsize = maxsize
+            self.ttl = ttl
+            self._data: dict[Any, Any] = {}
+
+        def __contains__(self, key: Any) -> bool:
+            return key in self._data
+
+        def __getitem__(self, key: Any) -> Any:
+            return self._data[key]
+
+        def __setitem__(self, key: Any, value: Any) -> None:
+            self._data[key] = value
+
+        def __delitem__(self, key: Any) -> None:
+            del self._data[key]
+
+        def clear(self) -> None:
+            self._data.clear()
+
+        def __len__(self) -> int:
+            return len(self._data)
+
 
 logger = logging.getLogger(__name__)
 
@@ -121,24 +196,27 @@ class MultiLayerCache:
             high_watermark_pct: Percentage to trigger cleanup
             cleanup_batch_size: Number of entries to evict per cleanup
         """
-        if not CACHETOOLS_AVAILABLE:
-            raise RuntimeError("cachetools not installed. Install with: pip install cachetools>=5.3.0")
-
         self.lru_size = lru_size
         self.fifo_size = fifo_size
         self.ttl_seconds = ttl_seconds
         self.high_watermark_pct = high_watermark_pct
         self.cleanup_batch_size = cleanup_batch_size
 
-        # Initialize caches
+        # Initialize caches - use Any for type since we support both cachetools and fallback
+        self._lru: Any
+        self._fifo: Any
+
         if ttl_seconds > 0:
             # Use TTL cache for both tiers
-            self._lru: Any = TTLCache(maxsize=lru_size, ttl=ttl_seconds)
-            self._fifo: Any = TTLCache(maxsize=fifo_size, ttl=ttl_seconds)
+            self._lru = TTLCache(maxsize=lru_size, ttl=ttl_seconds)
+            self._fifo = TTLCache(maxsize=fifo_size, ttl=ttl_seconds)
         else:
             # Use LRU + FIFO without TTL
             self._lru = LRUCache(maxsize=lru_size)
             self._fifo = FIFOCache(maxsize=fifo_size)
+
+        if not CACHETOOLS_AVAILABLE:
+            logger.warning("cachetools not available, using fallback implementations (limited functionality)")
 
         # Eviction queue for batch ChromaDB deletes
         self._eviction_queue: deque[str] = deque(maxlen=cleanup_batch_size)

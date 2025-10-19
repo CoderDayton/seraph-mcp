@@ -5,7 +5,7 @@ ChromaDB-backed semantic cache with vector similarity search and multi-layer evi
 Uses the provider system for embeddings.
 
 Per SDD.md:
-- ChromaDB for vector storage
+- ChromaDB for vector storage (lazy imported)
 - Provider system for embeddings
 - Similarity-based cache hits
 - Multi-layer LRU+FIFO eviction (P0 Phase 3)
@@ -17,22 +17,32 @@ import logging
 import time
 from typing import Any
 
-try:
-    import chromadb
-    from chromadb.config import Settings
-
-    CHROMADB_AVAILABLE = True
-except ImportError:
-    chromadb = None  # type: ignore[assignment]
-    Settings = None  # type: ignore[assignment,misc]
-    CHROMADB_AVAILABLE = False
-
 from ..providers import ProviderConfig
 from .config import SemanticCacheConfig
 from .embeddings import EmbeddingGenerator
 from .eviction import MultiLayerCache
 
 logger = logging.getLogger(__name__)
+
+# Lazy import flag - ChromaDB only loaded when SemanticCache is instantiated
+_CHROMADB_CHECKED = False
+_CHROMADB_AVAILABLE = False
+
+
+def _check_chromadb_available() -> bool:
+    """Check if ChromaDB is available (lazy check on first use)."""
+    global _CHROMADB_CHECKED, _CHROMADB_AVAILABLE
+
+    if not _CHROMADB_CHECKED:
+        try:
+            import chromadb  # noqa: F401
+
+            _CHROMADB_AVAILABLE = True
+        except ImportError:
+            _CHROMADB_AVAILABLE = False
+        _CHROMADB_CHECKED = True
+
+    return _CHROMADB_AVAILABLE
 
 
 class SemanticCache:
@@ -57,7 +67,7 @@ class SemanticCache:
         Args:
             config: Semantic cache configuration
         """
-        if not CHROMADB_AVAILABLE or chromadb is None or Settings is None:
+        if not _check_chromadb_available():
             raise RuntimeError("chromadb not installed. Install with: pip install chromadb>=0.4.0")
 
         self.config = config
@@ -71,10 +81,11 @@ class SemanticCache:
         self._initialize()
 
     def _initialize(self) -> None:
-        """Initialize ChromaDB and embedding generator."""
-        # Initialize ChromaDB
-        if chromadb is None or Settings is None:
-            raise RuntimeError("chromadb not initialized")
+        """Initialize ChromaDB and embedding generator (lazy imports ChromaDB)."""
+        # Lazy import ChromaDB - only loaded when SemanticCache is instantiated
+        import chromadb
+        from chromadb.config import Settings
+
         logger.info(f"Initializing ChromaDB at {self.config.persist_directory}")
         self._client = chromadb.PersistentClient(
             path=self.config.persist_directory,
@@ -113,6 +124,7 @@ class SemanticCache:
 
             provider_config = ProviderConfig(
                 api_key=self.config.embedding_api_key,
+                model=self.config.embedding_model,
                 base_url=self.config.embedding_base_url,
                 timeout=30.0,
                 max_retries=3,

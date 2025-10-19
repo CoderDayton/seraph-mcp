@@ -15,15 +15,20 @@ Per SDD.md:
 import asyncio
 import logging
 import time
+from typing import Any
 
 try:
     from google import genai
-    from google.genai.types import GenerateContentConfig
+    from google.genai import types
+    from google.genai.types import Content, GenerateContentConfig, Part
 
     GEMINI_AVAILABLE = True
 except ImportError:
     genai = None  # type: ignore[assignment]
+    types = None  # type: ignore[assignment]
     GenerateContentConfig = None  # type: ignore[assignment, misc]
+    Content = None  # type: ignore[assignment, misc]
+    Part = None  # type: ignore[assignment, misc]
     GEMINI_AVAILABLE = False
 
 from ..errors import DependencyError, ProviderError, ProviderRateLimitError, ProviderTimeoutError
@@ -110,17 +115,18 @@ class GeminiProvider(BaseProvider):
         """Return Models.dev provider ID."""
         return "google"
 
-    def _convert_messages_to_gemini_format(
-        self, messages: list[dict[str, str]]
-    ) -> tuple[str | None, list[dict[str, str | list[str]]]]:
+    def _convert_messages_to_gemini_format(self, messages: list[dict[str, str]]) -> tuple[str | None, list[Any]]:
         """
-        Convert standard message format to Gemini format.
+        Convert standard message format to Gemini format using proper types.Content objects.
 
         Returns:
             Tuple of (system_instruction, converted_messages)
         """
+        if not GEMINI_AVAILABLE or types is None:
+            raise RuntimeError("google.genai.types is not available")
+
         system_instruction: str | None = None
-        converted: list[dict[str, str | list[str]]] = []
+        converted = []
 
         for msg in messages:
             role = msg.get("role", "user")
@@ -131,10 +137,10 @@ class GeminiProvider(BaseProvider):
                 system_instruction = content
             elif role == "assistant":
                 # Gemini uses "model" instead of "assistant"
-                converted.append({"role": "model", "parts": [content]})
+                converted.append(types.Content(role="model", parts=[types.Part.from_text(text=content)]))
             else:
                 # "user" role
-                converted.append({"role": "user", "parts": [content]})
+                converted.append(types.Content(role="user", parts=[types.Part.from_text(text=content)]))
 
         return system_instruction, converted
 
@@ -181,15 +187,8 @@ class GeminiProvider(BaseProvider):
                 system_instruction=system_instruction,
             )
 
-            # Build contents from messages
-            contents: list[dict[str, str | list[str]]] = []
-            for msg in converted_messages:
-                contents.append(
-                    {
-                        "role": msg["role"],
-                        "parts": msg["parts"],
-                    }
-                )
+            # Use the properly formatted Content objects directly
+            contents = converted_messages
 
             logger.debug(
                 f"Calling Gemini API with model {request.model}",
@@ -203,11 +202,17 @@ class GeminiProvider(BaseProvider):
                 },
             )
 
-            # Generate content
-            response = await self.client.aio.models.generate_content(
-                model=request.model,
-                contents=contents,
-                config=config,
+            # Determine timeout: use request timeout if provided, otherwise provider default
+            timeout = request.timeout if request.timeout is not None else self.config.timeout
+
+            # Generate content with timeout
+            response = await asyncio.wait_for(
+                self.client.aio.models.generate_content(
+                    model=request.model,
+                    contents=contents,
+                    config=config,
+                ),
+                timeout=timeout,
             )
 
             # Extract response data

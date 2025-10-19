@@ -23,6 +23,7 @@ Usage:
 import logging
 from typing import Any
 
+from ..security import ContentValidator, InjectionDetector, SecurityConfig
 from .config import ContextOptimizationConfig, load_config
 from .optimizer import ContextOptimizer
 
@@ -43,6 +44,7 @@ class OptimizedProvider:
         optimizer: ContextOptimizer | None = None,
         config: ContextOptimizationConfig | None = None,
         budget_tracker: Any | None = None,
+        security_config: SecurityConfig | None = None,
     ):
         """
         Initialize optimized provider wrapper.
@@ -52,6 +54,7 @@ class OptimizedProvider:
             optimizer: Context optimizer instance (creates default if None)
             config: Optimization config (loads from env if None)
             budget_tracker: Optional budget tracker for cost savings
+            security_config: Security configuration (loads from env if None)
         """
         self.provider = provider
         self.budget_tracker = budget_tracker
@@ -60,6 +63,17 @@ class OptimizedProvider:
         if config is None:
             config = load_config()
         self.config = config
+
+        # Load security config if not provided
+        if security_config is None:
+            from ..security.config import load_security_config
+
+            security_config = load_security_config()
+        self.security_config = security_config
+
+        # Initialize security components
+        self.injection_detector = InjectionDetector(config=security_config)
+        self.content_validator = ContentValidator(config=security_config)
 
         # Create optimizer if not provided
         if optimizer is None:
@@ -72,6 +86,8 @@ class OptimizedProvider:
             "optimized_calls": 0,
             "total_tokens_saved": 0,
             "total_cost_saved": 0.0,
+            "injection_detections": 0,
+            "validation_failures": 0,
         }
 
     async def generate(
@@ -138,13 +154,56 @@ class OptimizedProvider:
 
     async def _optimize_prompt(self, prompt: str) -> tuple[str, Any | None]:
         """
-        Optimize a single prompt string.
+        Optimize a single prompt string with security checks.
+
+        Security workflow:
+        1. Detect injection → If detected, skip optimization (use original)
+        2. Optimize content → Compress using configured method
+        3. Validate output → If failed, rollback to original
 
         Returns:
             Tuple of (optimized_prompt, optimization_result)
         """
         try:
+            # Security: Pre-optimization injection detection
+            if self.security_config.enabled and self.security_config.injection_detection_enabled:
+                detection_result = self.injection_detector.detect(prompt)
+
+                if detection_result.detected:
+                    self.middleware_stats["injection_detections"] += 1
+
+                    if self.security_config.log_security_events:
+                        logger.warning(
+                            f"Injection detected (risk: {detection_result.risk_score:.2f}), "
+                            f"categories: {set(m['category'] for m in detection_result.matched_patterns)}, "
+                            f"using original content"
+                        )
+
+                    # Fail-safe: Return original content without optimization
+                    if self.security_config.fail_safe_on_detection:
+                        return prompt, None
+
+            # Optimize content
             result = await self.optimizer.optimize(prompt)
+
+            # Security: Post-optimization content validation
+            if self.security_config.enabled:
+                validation_result = self.content_validator.validate_compressed_content(
+                    original=prompt,
+                    compressed=result.optimized_content,
+                    quality_score=result.quality_score,
+                )
+
+                if not validation_result.passed:
+                    self.middleware_stats["validation_failures"] += 1
+
+                    if self.security_config.log_security_events:
+                        logger.warning(
+                            f"Validation failed: {', '.join(validation_result.reasons)}, " f"rolling back to original"
+                        )
+
+                    # Fail-safe: Return original content
+                    return prompt, None
 
             # Update middleware stats
             rollback_occurred = result.metadata.get("rollback_occurred", False)
@@ -168,7 +227,12 @@ class OptimizedProvider:
 
     async def _optimize_messages(self, messages: list[dict[str, str]]) -> tuple[list[dict[str, str]], Any | None]:
         """
-        Optimize chat messages (typically the last user message).
+        Optimize chat messages (typically the last user message) with security checks.
+
+        Security workflow:
+        1. Detect injection in user message → If detected, skip optimization
+        2. Optimize content → Compress using configured method
+        3. Validate output → If failed, rollback to original
 
         Returns:
             Tuple of (optimized_messages, optimization_result)
@@ -189,13 +253,52 @@ class OptimizedProvider:
             if last_user_idx is None:
                 return messages, None
 
-            # Optimize the last user message
+            # Get user message content
             user_content = messages[last_user_idx].get("content", "")
             if not user_content or len(user_content) < 100:
                 # Too short to optimize
                 return messages, None
 
+            # Security: Pre-optimization injection detection
+            if self.security_config.enabled and self.security_config.injection_detection_enabled:
+                detection_result = self.injection_detector.detect(user_content)
+
+                if detection_result.detected:
+                    self.middleware_stats["injection_detections"] += 1
+
+                    if self.security_config.log_security_events:
+                        logger.warning(
+                            f"Injection detected in message (risk: {detection_result.risk_score:.2f}), "
+                            f"categories: {set(m['category'] for m in detection_result.matched_patterns)}, "
+                            f"using original content"
+                        )
+
+                    # Fail-safe: Return original messages without optimization
+                    if self.security_config.fail_safe_on_detection:
+                        return messages, None
+
+            # Optimize the last user message
             result = await self.optimizer.optimize(user_content)
+
+            # Security: Post-optimization content validation
+            if self.security_config.enabled:
+                validation_result = self.content_validator.validate_compressed_content(
+                    original=user_content,
+                    compressed=result.optimized_content,
+                    quality_score=result.quality_score,
+                )
+
+                if not validation_result.passed:
+                    self.middleware_stats["validation_failures"] += 1
+
+                    if self.security_config.log_security_events:
+                        logger.warning(
+                            f"Message validation failed: {', '.join(validation_result.reasons)}, "
+                            f"rolling back to original"
+                        )
+
+                    # Fail-safe: Return original messages
+                    return messages, None
 
             # Update message with optimized content
             optimized_messages[last_user_idx] = {

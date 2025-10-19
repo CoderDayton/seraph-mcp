@@ -12,7 +12,7 @@ import asyncio
 from collections.abc import AsyncGenerator
 from typing import Any
 
-import pytest  # type: ignore[import-untyped]
+import pytest
 
 from src.cache.backends.redis import RedisCacheBackend
 
@@ -33,8 +33,8 @@ pytestmark = pytest.mark.skipif(not redis_available, reason="Redis server not av
 class TestRedisCacheBackend:
     """Test suite for RedisCacheBackend."""
 
-    @pytest.fixture  # type: ignore[misc]
-    async def cache(self, test_redis_url: str) -> AsyncGenerator[RedisCacheBackend, None]:  # type: ignore[misc]
+    @pytest.fixture
+    async def cache(self, test_redis_url: str) -> AsyncGenerator[RedisCacheBackend, None]:
         """Create a fresh Redis cache instance for each test."""
         cache = RedisCacheBackend(
             redis_url=test_redis_url,

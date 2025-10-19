@@ -24,6 +24,7 @@ class ProviderConfig(BaseModel):
     """Base configuration for all providers."""
 
     api_key: str = Field(..., description="API key for the provider")
+    model: str | None = Field(None, description="Default model identifier for this provider")
     base_url: str | None = Field(None, description="Custom base URL (optional)")
     timeout: float = Field(30.0, ge=1.0, description="Request timeout in seconds")
     max_retries: int = Field(3, ge=0, description="Maximum retry attempts")
@@ -96,6 +97,7 @@ class CompletionRequest(BaseModel):
     temperature: float = Field(0.7, ge=0.0, le=2.0, description="Sampling temperature")
     max_tokens: int | None = Field(None, description="Maximum tokens to generate")
     stream: bool = Field(False, description="Whether to stream the response")
+    timeout: float | None = Field(None, ge=1.0, description="Request timeout in seconds (overrides provider default)")
 
     model_config = ConfigDict(extra="allow")  # Allow provider-specific parameters
 

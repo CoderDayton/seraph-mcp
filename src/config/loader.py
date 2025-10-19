@@ -154,6 +154,12 @@ def load_config(
                 "max_retries": int(os.getenv("OPENAI_COMPATIBLE_MAX_RETRIES", "3")),
             },
         },
+        "features": {
+            "semantic_cache": os.getenv("SEMANTIC_CACHE_ENABLED", "false").lower() == "true",
+            "context_optimization": os.getenv("CONTEXT_OPTIMIZATION_ENABLED", "false").lower() == "true",
+            "budget_management": os.getenv("BUDGET_MANAGEMENT_ENABLED", "false").lower() == "true",
+            "quality_preservation": os.getenv("QUALITY_PRESERVATION_ENABLED", "false").lower() == "true",
+        },
     }
 
     try:

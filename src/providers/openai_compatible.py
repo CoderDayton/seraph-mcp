@@ -163,8 +163,13 @@ class OpenAICompatibleProvider(BaseProvider):
             if extra and isinstance(extra, dict):
                 api_params.update(extra)
 
-            # Make API call
-            response = await self.client.chat.completions.create(**api_params)
+            # Determine timeout: use request timeout if provided, otherwise provider default
+            timeout = request.timeout if request.timeout is not None else self.config.timeout
+
+            # Make API call with timeout
+            import asyncio
+
+            response = await asyncio.wait_for(self.client.chat.completions.create(**api_params), timeout=timeout)
 
             # Extract response data
             content = response.choices[0].message.content or ""

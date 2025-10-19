@@ -10,7 +10,7 @@ Python 3.12+ with modern async patterns and type hints.
 import asyncio
 from typing import Any
 
-import pytest  # type: ignore[import-untyped]
+import pytest
 
 from src.cache.backends.memory import MemoryCacheBackend
 
@@ -18,7 +18,7 @@ from src.cache.backends.memory import MemoryCacheBackend
 class TestMemoryCacheBackend:
     """Test suite for MemoryCacheBackend."""
 
-    @pytest.fixture  # type: ignore[misc]
+    @pytest.fixture
     async def cache(self) -> MemoryCacheBackend:
         """Create a fresh memory cache instance for each test."""
         return MemoryCacheBackend(
@@ -147,8 +147,8 @@ class TestMemoryCacheBackend:
         assert await cache.exists("key1") is True
         assert await cache.get("key1") == "value1"
 
-        # Wait for expiration
-        await asyncio.sleep(1.1)
+        # Wait for expiration (2.0s to ensure TTL=1s is fully expired)
+        await asyncio.sleep(2.0)
 
         # Should be expired now
         assert await cache.exists("key1") is False
@@ -177,8 +177,8 @@ class TestMemoryCacheBackend:
         await short_ttl_cache.set("key1", "value1", ttl=None)
         assert await short_ttl_cache.get("key1") == "value1"
 
-        # Wait for default TTL to expire
-        await asyncio.sleep(1.1)
+        # Wait for default TTL to expire (2.0s to ensure TTL=1s is fully expired)
+        await asyncio.sleep(2.0)
         assert await short_ttl_cache.get("key1") is None
 
     async def test_lru_eviction(self) -> None:
@@ -253,8 +253,8 @@ class TestMemoryCacheBackend:
         assert await cache.get("key1") == "value1"
         assert await cache.get("key2") == "value2"
 
-        # Wait for expiration
-        await asyncio.sleep(1.1)
+        # Wait for expiration (2.0s to ensure TTL=1s is fully expired)
+        await asyncio.sleep(2.0)
 
         # Should be expired
         assert await cache.get("key1") is None

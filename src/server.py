@@ -14,15 +14,15 @@ Following SDD.md mandatory rules:
 """
 
 import logging
+from contextlib import asynccontextmanager
 from typing import Any
 
 from fastmcp import FastMCP
 
+# Use relative imports (package is now properly structured)
 from .cache import close_all_caches, create_cache
 from .config import load_config
 from .observability import get_observability, initialize_observability
-from .providers.base import ProviderConfig as RuntimeProviderConfig
-from .providers.factory import create_provider as create_runtime_provider
 from .validation import validate_input
 from .validation.tool_schemas import (
     AnalyzeTokenEfficiencyInput,
@@ -58,8 +58,17 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Create FastMCP server
-mcp = FastMCP("Seraph MCP - AI Optimization Platform")
+
+@asynccontextmanager
+async def server_lifespan(server: Any) -> Any:
+    """Server lifespan manager (startup/shutdown)."""
+    await initialize_server()
+    yield
+    await cleanup_server()
+
+
+# Create FastMCP server with lifespan
+mcp = FastMCP("Seraph MCP - AI Optimization Platform", lifespan=server_lifespan)
 
 # Global state
 _initialized = False
@@ -68,6 +77,41 @@ _budget_tracker = None
 _budget_enforcer = None
 _budget_analytics = None
 _semantic_cache = None
+_semantic_cache_config = None  # Store config for lazy init
+_lazy_semantic_cache_enabled = False  # Track if lazy init is pending
+
+
+def _ensure_semantic_cache_initialized() -> None:
+    """
+    Lazy initialization of semantic cache on first tool invocation.
+
+    Defers ChromaDB import (4.5s overhead) until actually needed.
+    """
+    global _semantic_cache
+
+    if _semantic_cache is not None:
+        return  # Already initialized
+
+    if not _lazy_semantic_cache_enabled:
+        raise RuntimeError("Semantic cache is not enabled")
+
+    logger.info("Lazy loading semantic cache (ChromaDB import)...")
+    import time
+
+    start = time.time()
+
+    try:
+        from .semantic_cache import SemanticCacheConfig, get_semantic_cache
+
+        # Use stored config or create default
+        config = _semantic_cache_config or SemanticCacheConfig()
+        _semantic_cache = get_semantic_cache(config=config)
+
+        elapsed_ms = (time.time() - start) * 1000
+        logger.info(f"Semantic cache initialized in {elapsed_ms:.0f}ms")
+    except Exception as e:
+        logger.error(f"Semantic cache lazy initialization failed: {e}", exc_info=True)
+        raise
 
 
 @mcp.tool()
@@ -685,6 +729,8 @@ async def lookup_semantic_cache(
     Returns:
         Best matching cached entry or None
     """
+    _ensure_semantic_cache_initialized()  # Lazy init
+
     if _semantic_cache is None:
         return {"error": "Semantic cache is not enabled"}
 
@@ -730,6 +776,8 @@ async def store_in_semantic_cache(
     Returns:
         Success status
     """
+    _ensure_semantic_cache_initialized()  # Lazy init
+
     if _semantic_cache is None:
         return {"error": "Semantic cache is not enabled"}
 
@@ -773,6 +821,8 @@ async def search_semantic_cache(
     Returns:
         List of matching entries with similarity scores
     """
+    _ensure_semantic_cache_initialized()  # Lazy init
+
     if _semantic_cache is None:
         return {"error": "Semantic cache is not enabled"}
 
@@ -809,6 +859,8 @@ async def get_semantic_cache_stats() -> dict[str, Any]:
     Returns:
         Cache statistics and configuration
     """
+    _ensure_semantic_cache_initialized()  # Lazy init
+
     if _semantic_cache is None:
         return {"error": "Semantic cache is not enabled"}
 
@@ -840,6 +892,8 @@ async def clear_semantic_cache() -> dict[str, Any]:
     Returns:
         Success status
     """
+    _ensure_semantic_cache_initialized()  # Lazy init
+
     if _semantic_cache is None:
         return {"error": "Semantic cache is not enabled"}
 
@@ -921,6 +975,17 @@ async def optimize_context(
             provider=_context_optimizer.get("provider"),
             config=temp_config,
         )
+
+        # Log token compression metrics
+        compression_log = (
+            f"[COMPRESSION] Before: {result.tokens_before} tokens | "
+            f"After: {result.tokens_after} tokens | "
+            f"Saved: {result.tokens_saved} tokens ({result.reduction_percentage:.1f}%) | "
+            f"Method: {result.method} | Quality: {result.quality_score:.2f} | "
+            f"Time: {result.processing_time_ms:.1f}ms"
+        )
+        logger.info(compression_log)
+        print(compression_log)
 
         return {
             "success": True,
@@ -1048,7 +1113,12 @@ def _init_context_optimization_if_available(config: Any) -> None:
         context_config = load_context_config()
 
         # Initialize a provider via providers.factory (first enabled and configured)
-        provider_instance = None
+        # Lazy import provider factory - only load when context optimization is enabled
+        from .context_optimization.middleware import wrap_provider
+        from .providers.base import ProviderConfig as RuntimeProviderConfig
+        from .providers.factory import create_provider as create_runtime_provider
+
+        base_provider = None
         providers_cfg = getattr(config, "providers", None)
         if providers_cfg:
             candidates = [
@@ -1062,12 +1132,13 @@ def _init_context_optimization_if_available(config: Any) -> None:
                     if getattr(pcfg, "enabled", False) and getattr(pcfg, "api_key", None):
                         runtime_cfg = RuntimeProviderConfig(
                             api_key=pcfg.api_key or "",
+                            model=getattr(pcfg, "model", None),
                             base_url=pcfg.base_url,
                             timeout=pcfg.timeout,
                             max_retries=pcfg.max_retries,
                             enabled=True,
                         )
-                        provider_instance = create_runtime_provider(name, runtime_cfg)
+                        base_provider = create_runtime_provider(name, runtime_cfg)
                         break
                 except Exception as e2:
                     logger.info(f"Skipping provider {name}: {e2}")
@@ -1076,8 +1147,19 @@ def _init_context_optimization_if_available(config: Any) -> None:
         budget_tracker_instance = _budget_tracker if _budget_tracker else None
         optimizer_instance = ContextOptimizer(
             config=context_config,
-            provider=provider_instance,
+            provider=base_provider,
             budget_tracker=budget_tracker_instance,
+        )
+
+        # Wrap provider with optimization middleware for automatic optimization
+        provider_instance = (
+            wrap_provider(
+                provider=base_provider,
+                config=context_config,
+                budget_tracker=budget_tracker_instance,
+            )
+            if base_provider
+            else None
         )
 
         # P0: Store config, provider, and optimizer instance for use by tools
@@ -1105,6 +1187,7 @@ def _init_budget_management_if_available(config: Any) -> None:
             get_budget_enforcer,
             get_budget_tracker,
         )
+
     except Exception as e:
         logger.info("Budget management module not available: %s", e)
         _budget_tracker = None
@@ -1125,23 +1208,25 @@ def _init_budget_management_if_available(config: Any) -> None:
 
 
 def _init_semantic_cache_if_available(config: Any) -> None:
-    global _semantic_cache
-    if _semantic_cache is not None:
-        return
+    """
+    Initialize semantic cache if available (LAZY).
+
+    Defers ChromaDB import (4.5s overhead) until first semantic cache tool invocation.
+    Only validates feature flag during server startup.
+    """
+    global _lazy_semantic_cache_enabled, _semantic_cache_config
+
     try:
-        from .semantic_cache import SemanticCacheConfig, get_semantic_cache
+        from .semantic_cache import SemanticCacheConfig
+
+        # Store config for lazy init but don't import ChromaDB yet
+        _semantic_cache_config = SemanticCacheConfig()
+        _lazy_semantic_cache_enabled = True
+
+        logger.info("Semantic cache enabled (lazy initialization on first use)")
     except Exception as e:
-        logger.info("Semantic cache module not available or failed to import: %s", e)
-        _semantic_cache = None
-        return
-    try:
-        # For now, use default config - can be enhanced to read from env
-        semantic_config = SemanticCacheConfig()
-        _semantic_cache = get_semantic_cache(config=semantic_config)
-        logger.info("Semantic cache initialized")
-    except Exception as e:
-        logger.warning("Semantic cache initialization failed: %s", e)
-        _semantic_cache = None
+        logger.warning("Semantic cache configuration failed: %s", e)
+        _lazy_semantic_cache_enabled = False
 
 
 async def initialize_server() -> None:
@@ -1184,7 +1269,7 @@ async def initialize_server() -> None:
         else:
             logger.info("Budget management disabled via feature flags")
 
-        # Initialize semantic cache if enabled
+        # Initialize semantic cache if enabled (LAZY - no ChromaDB import yet)
         if config.features.semantic_cache:
             _init_semantic_cache_if_available(config)
         else:
@@ -1260,15 +1345,6 @@ async def cleanup_server() -> None:
 
     except Exception as e:
         logger.error(f"Error during cleanup: {e}", exc_info=True)
-
-
-# Register lifecycle hooks
-@mcp.lifespan()  # type: ignore[attr-defined]
-async def lifespan():  # type: ignore[no-untyped-def]
-    """Server lifespan manager (startup/shutdown)."""
-    await initialize_server()
-    yield
-    await cleanup_server()
 
 
 def main() -> None:

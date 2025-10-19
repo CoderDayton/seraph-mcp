@@ -75,7 +75,7 @@ class ObservabilityAdapter:
 
     def _setup_logger(self) -> logging.Logger:
         """Setup structured JSON logger."""
-        logger = logging.getLogger("seraph_mcp")
+        logger = logging.getLogger("src")
 
         # Remove existing handlers
         logger.handlers.clear()
@@ -98,7 +98,7 @@ class ObservabilityAdapter:
         Increment a counter metric.
 
         Args:
-            metric: Metric name (e.g., "seraph_mcp.cache.hits")
+            metric: Metric name (e.g., "src.cache.hits")
             value: Value to increment by
             tags: Optional metric tags/labels
         """
@@ -106,7 +106,7 @@ class ObservabilityAdapter:
             return
 
         tags = tags or {}
-        metric_name = f"seraph_mcp.{metric}"
+        metric_name = f"src.{metric}"
 
         if self.backend == "simple":
             self._store_metric(metric_name, value, tags)
@@ -135,7 +135,7 @@ class ObservabilityAdapter:
             return
 
         tags = tags or {}
-        metric_name = f"seraph_mcp.{metric}"
+        metric_name = f"src.{metric}"
 
         if self.backend == "simple":
             self._store_metric(metric_name, value, tags)
@@ -158,7 +158,7 @@ class ObservabilityAdapter:
             return
 
         tags = tags or {}
-        metric_name = f"seraph_mcp.{metric}"
+        metric_name = f"src.{metric}"
 
         if self.backend == "simple":
             self._store_metric(metric_name, value, tags)

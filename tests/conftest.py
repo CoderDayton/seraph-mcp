@@ -61,14 +61,14 @@ def test_redis_url() -> str:
 
 
 @pytest_asyncio.fixture
-async def redis_client(test_redis_url: str) -> AsyncGenerator[Redis, None]:  # type: ignore[misc]
+async def redis_client(test_redis_url: str) -> AsyncGenerator[Redis, None]:
     """
     Create a Redis client for testing.
 
     Automatically skips tests if Redis is not available.
     Clears the test database before and after each test.
     """
-    client: Redis = Redis.from_url(test_redis_url, decode_responses=False)  # type: ignore[call-arg]
+    client: Redis = Redis.from_url(test_redis_url, decode_responses=False)
 
     # Ensure we can connect
     try:
@@ -89,8 +89,8 @@ async def redis_client(test_redis_url: str) -> AsyncGenerator[Redis, None]:  # t
         await client.close()
 
 
-@pytest.fixture  # type: ignore[misc]
-def mock_env_memory(monkeypatch: pytest.MonkeyPatch) -> None:  # type: ignore[type-arg]
+@pytest.fixture
+def mock_env_memory(monkeypatch: pytest.MonkeyPatch) -> None:
     """Set environment variables for memory cache backend."""
     monkeypatch.setenv("CACHE_BACKEND", "memory")
     monkeypatch.setenv("CACHE_MAX_SIZE", "100")
@@ -98,8 +98,8 @@ def mock_env_memory(monkeypatch: pytest.MonkeyPatch) -> None:  # type: ignore[ty
     monkeypatch.setenv("CACHE_NAMESPACE", "test")
 
 
-@pytest.fixture  # type: ignore[misc]
-def mock_env_redis(monkeypatch: pytest.MonkeyPatch, test_redis_url: str) -> None:  # type: ignore[type-arg]
+@pytest.fixture
+def mock_env_redis(monkeypatch: pytest.MonkeyPatch, test_redis_url: str) -> None:
     """Set environment variables for Redis cache backend."""
     if not is_redis_available():
         pytest.skip("Redis not available")
@@ -111,7 +111,7 @@ def mock_env_redis(monkeypatch: pytest.MonkeyPatch, test_redis_url: str) -> None
     monkeypatch.setenv("CACHE_NAMESPACE", "test")
 
 
-@pytest.fixture  # type: ignore[misc]
+@pytest.fixture
 def sample_cache_data() -> dict[str, Any]:
     """Sample data for cache testing."""
     return {
@@ -134,7 +134,7 @@ def sample_cache_data() -> dict[str, Any]:
     }
 
 
-@pytest.fixture(autouse=True)  # type: ignore[misc]
+@pytest.fixture(autouse=True)
 def reset_config() -> Generator[None, None, None]:
     """Reset configuration singleton between tests to ensure clean state."""
     # Import here to avoid circular imports
@@ -152,7 +152,7 @@ def reset_config() -> Generator[None, None, None]:
     loader._config_instance = original_config
 
 
-@pytest.fixture  # type: ignore[misc]
+@pytest.fixture
 def sample_text_short() -> str:
     """Short text sample for context optimization tests."""
     return """
@@ -162,7 +162,7 @@ def sample_text_short() -> str:
     """
 
 
-@pytest.fixture  # type: ignore[misc]
+@pytest.fixture
 def sample_text_long() -> str:
     """Long text sample for context optimization tests."""
     return (
@@ -192,7 +192,7 @@ def sample_text_long() -> str:
     )  # Repeat to make it longer
 
 
-@pytest.fixture  # type: ignore[misc]
+@pytest.fixture
 def sample_compression_config() -> dict[str, Any]:
     """Sample configuration for compression tests."""
     return {
@@ -204,7 +204,7 @@ def sample_compression_config() -> dict[str, Any]:
     }
 
 
-@pytest.fixture  # type: ignore[misc]
+@pytest.fixture
 def mock_ai_provider() -> Any:
     """Mock AI provider for testing context optimization."""
     from unittest.mock import AsyncMock, MagicMock
@@ -215,7 +215,7 @@ def mock_ai_provider() -> Any:
     return mock
 
 
-@pytest.fixture(autouse=True)  # type: ignore[misc]
+@pytest.fixture(autouse=True)
 def reset_cache_factory() -> Generator[None, None, None]:
     """Reset cache factory after each test to prevent state leakage."""
     yield
@@ -228,7 +228,7 @@ def reset_cache_factory() -> Generator[None, None, None]:
         pass
 
 
-@pytest.fixture  # type: ignore[misc]
+@pytest.fixture
 def temp_cache_dir(tmp_path: Any) -> str:
     """Create a temporary directory for cache testing."""
     cache_dir = tmp_path / "cache"

@@ -9,7 +9,7 @@ Python 3.12+ with modern async patterns and type hints.
 
 from collections.abc import AsyncGenerator
 
-import pytest  # type: ignore[import-untyped]
+import pytest
 
 from src.cache.factory import (
     clear_cache_registry,
@@ -37,8 +37,8 @@ except Exception:
 class TestCacheFactory:
     """Test suite for cache factory functionality."""
 
-    @pytest.fixture(autouse=True)  # type: ignore[misc]
-    async def cleanup(self) -> AsyncGenerator[None, None]:  # type: ignore[misc]
+    @pytest.fixture(autouse=True)
+    async def cleanup(self) -> AsyncGenerator[None, None]:
         """Clean up cache instances after each test."""
         yield
         await close_all_caches()
@@ -362,7 +362,7 @@ class TestCacheFactory:
         # Wait for expiration
         import asyncio
 
-        await asyncio.sleep(1.1)
+        await asyncio.sleep(2.0)  # 100% margin for TTL=1s to handle event loop jitter
 
         # Should be expired
         assert await cache.get("key") is None

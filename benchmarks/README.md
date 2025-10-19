@@ -6,33 +6,76 @@ This directory contains performance benchmarks for the Seraph MCP compression sy
 
 ### 1. Compression Comparison (`compression_comparison.py`)
 
-Compares Seraph and Hybrid compression methods across different content sizes and types.
+Compares **Seraph** (deterministic, AI-free) and **Hybrid** (Seraph + AI polish) compression methods.
 
 **What it measures:**
-- Compression ratio (tokens saved)
+- Token reduction percentage (40-60% target)
 - Processing time (latency)
-- Quality score (semantic similarity)
-- Validation success rate
+- Method-specific performance characteristics
 
 **Content types tested:**
-- Short technical content (~200 tokens)
-- Medium documentation (~1,500 tokens)
-- Long technical content (~8,000 tokens)
+- Code snippets (~500 tokens)
+- Documentation (~200 tokens)
+- Chat conversations (~200 tokens)
+
+**Modes tested:**
+1. **Seraph**: Deterministic multi-layer compression (L1/L2/L3)
+   - No AI/LLM required
+   - Works offline
+   - Fast (<100ms typical)
+
+2. **Hybrid**: Seraph pre-compress + AI polish
+   - Requires AI provider (see config below)
+   - Better quality scores
+   - Slower (includes API latency)
 
 **Usage:**
+
+**Seraph-only (No AI required):**
+```bash
+# No environment variables needed for Seraph-only mode
+uv run python benchmarks/compression_comparison.py
+```
+
+**With Hybrid mode (requires AI provider):**
 ```bash
 # Set up environment variables in .env:
 OPENAI_COMPATIBLE_API_KEY=your-api-key
 OPENAI_COMPATIBLE_BASE_URL=your-base-url
 OPENAI_COMPATIBLE_MODEL=your-model
 
-# Run benchmark as a module
-python -m benchmarks.compression_comparison
+# Or for Gemini:
+GOOGLE_API_KEY=your-gemini-key
+
+# Run benchmark
+uv run python benchmarks/compression_comparison.py
 ```
 
 **Output:**
-- Console summary with detailed metrics
-- JSON results file: `benchmarks/benchmark_results.json`
+```
+=== Compression Benchmark: Seraph vs Hybrid ===
+
+--- Seraph Mode (Deterministic, No AI) ---
+code: 514 -> 197 (61.7%) in 45.2ms
+docs: 188 -> 88 (53.2%) in 12.3ms
+chat: 209 -> 99 (52.6%) in 18.1ms
+
+Seraph Average: 55.8%
+✓ PASS: Within 40-60% claim
+
+--- Hybrid Mode (Seraph + AI Polish) ---
+code: 514 -> 180 (65.0%) in 234.5ms
+docs: 188 -> 82 (56.4%) in 198.2ms
+chat: 209 -> 91 (56.5%) in 203.1ms
+
+Hybrid Average: 59.3%
+✓ PASS: Within 40-60% claim
+
+--- Comparison ---
+Seraph: 55.8% reduction
+Hybrid: 59.3% reduction
+Hybrid improvement: +3.5% (better)
+```
 
 ## Understanding the Results
 

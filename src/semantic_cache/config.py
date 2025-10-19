@@ -4,7 +4,7 @@ Semantic Cache Configuration
 Defines typed configuration for semantic caching with vector similarity search.
 Uses the unified provider system for embeddings (OpenAI, OpenAI-compatible, Gemini).
 
-Per SDD.md (v2.0.0):
+Per SDD.md (v1.0.0):
 - Minimal, functional implementation
 - Uses unified provider-backed embedding infrastructure
 - No local (sentence-transformers) support (removed to reduce dependencies)
@@ -21,12 +21,12 @@ class SemanticCacheConfig(BaseModel):
 
     # Embedding provider configuration
     embedding_provider: str = Field(
-        default="openai",
+        default="gemini",
         description="Provider for embeddings: 'openai', 'openai-compatible', 'gemini'",
     )
     embedding_model: str = Field(
-        default="text-embedding-3-small",
-        description="Embedding model name (e.g., text-embedding-3-small for OpenAI)",
+        default="text-embedding-004",
+        description="Embedding model name (e.g., text-embedding-004 for Gemini)",
     )
 
     # For API providers (openai, openai-compatible)

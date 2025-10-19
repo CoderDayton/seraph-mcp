@@ -24,7 +24,6 @@ from __future__ import annotations
 import asyncio
 import gzip
 import hashlib
-import itertools as it
 import json
 import logging
 import math
@@ -219,12 +218,12 @@ class Tier1500x:
     Heuristic, deterministic (seeded).
     """
 
-    def __init__(self, seed: int = 7, l1_ratio: float = 0.002, l2_ratio: float = 0.01, l3_ratio: float = 0.05):
+    def __init__(self, seed: int = 7, l1_ratio: float = 0.15, l2_ratio: float = 0.50, l3_ratio: float = 0.70):
         self.seed = seed
         random.seed(seed)
-        self.l1_ratio = l1_ratio
-        self.l2_ratio = l2_ratio
-        self.l3_ratio = l3_ratio
+        self.l1_ratio = l1_ratio  # 15% retention
+        self.l2_ratio = l2_ratio  # 50% retention
+        self.l3_ratio = l3_ratio  # 70% retention
 
     # --- normalization & chunking
     def normalize(self, text: str) -> str:
@@ -233,16 +232,129 @@ class Tier1500x:
         text = re.sub(r"\n{3,}", "\n\n", text).strip()
         return text
 
+    def _is_code_like(self, text: str) -> bool:
+        """Detect if text is primarily code vs prose.
+
+        Uses Highlight.js-inspired heuristics:
+        - Keyword density (def/class/function/import/const/var/let)
+        - Structural patterns (indentation, braces, operators)
+        - Prose marker absence (sentences ending with punctuation)
+
+        Special cases:
+        - Chat/Q&A patterns (User:, Assistant:, Q:, A:) → prose
+        - Conversational markers (question marks, full sentences) → prose
+        """
+        lines = text.split("\n")
+
+        # Detect chat/Q&A patterns (User:, Assistant:, Q:, A:, etc.)
+        chat_markers = len(re.findall(r"^\s*(User|Assistant|Human|AI|Q|A):\s", text, re.MULTILINE | re.IGNORECASE))
+        if chat_markers >= 2:
+            # Multiple conversational turns = chat transcript, treat as prose
+            return False
+
+        if len(lines) < 2:
+            # Single line: check for code-specific patterns
+            return bool(re.search(r"\b(def|class|function|import|const|var|let|return|if|for|while)\s*[({]?", text))
+
+        # Strip common leading whitespace (like in docstrings/indented blocks)
+        # to avoid false positives from uniformly indented prose
+        # Strip and check for varied indentation patterns (code has nested blocks, prose doesn't)
+        indent_levels = set()
+        for line in lines:
+            if line.strip():
+                indent = len(line) - len(line.lstrip())
+                indent_levels.add(indent)
+
+        # Code has multiple indent levels (0, 4, 8, etc.)
+        # Prose typically has uniform indentation (all 0, or all 4)
+        has_varied_indentation = len(indent_levels) >= 3
+
+        # Multi-language keyword patterns (Python, JS, Java, C++, Go, Rust)
+        code_keywords = len(
+            re.findall(
+                r"\b(def|class|import|function|const|var|let|return|if|else|for|while|"
+                r"public|private|void|int|string|async|await|fn|struct|impl|package)\b",
+                text,
+            )
+        )
+
+        # Structural code indicators (assignment, comparison, brackets)
+        code_symbols = text.count("=") + text.count("==") + text.count("{") + text.count("[")
+
+        # Prose markers (sentences with proper punctuation)
+        prose_sentences = len(re.findall(r"[.!?]\s+[A-Z]", text))
+
+        # Decision thresholds (per Highlight.js relevance scoring)
+        keyword_density = code_keywords / max(1, len(text.split()))
+
+        # Strong prose indicator: many complete sentences
+        has_strong_prose = prose_sentences >= 5
+
+        return (
+            has_varied_indentation  # Multiple indentation levels (not uniform)
+            or keyword_density > 0.02  # >2% keywords
+            or (code_symbols > 5 and prose_sentences < 2)  # Symbols without prose
+        ) and not has_strong_prose  # Override: strong prose signal trumps code indicators
+
     def sentence_split(self, text: str) -> list[str]:
-        # rudimentary but stable splitter
+        """Split text into segments, with code-aware logic.
+
+        Code: Split on blank lines, function/class definitions, or logical blocks
+        Prose: Split on sentence boundaries (period/question/exclamation + capital)
+        """
+        if self._is_code_like(text):
+            # Code-aware splitting strategy
+            # 1. Split on blank lines (logical separation)
+            parts = re.split(r"\n\n+", text)
+
+            # 2. Further split on function/class definitions while preserving bodies
+            refined: list[str] = []
+            for part in parts:
+                if not part.strip():
+                    continue
+                # Split before function/class/decorator definitions
+                sub_parts = re.split(
+                    r"(?=^(?:def |class |async def |@\w+|function |pub fn |impl ))", part, flags=re.MULTILINE
+                )
+                refined.extend(p.strip() for p in sub_parts if p.strip())
+
+            # 3. Split oversized blocks (>800 chars) by single newlines
+            out = []
+            for p in refined:
+                if len(p) > 800:
+                    # Split by newlines but keep logical groups (indented blocks together)
+                    lines = p.split("\n")
+                    current_block: list[str] = []
+                    prev_indent = 0
+                    for line in lines:
+                        if not line.strip():
+                            continue
+                        indent = len(line) - len(line.lstrip())
+                        # New block if indent decreases (dedent = new scope)
+                        if current_block and indent < prev_indent:
+                            out.append("\n".join(current_block))
+                            current_block = [line]
+                        else:
+                            current_block.append(line)
+                        prev_indent = indent
+                    if current_block:
+                        out.append("\n".join(current_block))
+                else:
+                    out.append(p)
+            return out
+
+        # Prose: sentence-based splitting
         parts = re.split(r'(?<=[.!?])\s+(?=[A-Z0-9"\'])', text)
-        # fallback for very long lines
+
+        # Handle oversized paragraphs (>2000 chars)
         out = []
         for p in parts:
             if len(p) > 2000:
+                # Split into ~500-char chunks at word boundaries
                 out.extend(re.findall(r".{1,500}(?:\s+|$)", p))
             else:
                 out.append(p)
+
         return [s.strip() for s in out if s.strip()]
 
     def make_chunks(self, text: str, max_sent_per_chunk: int = 3) -> list[Chunk]:
@@ -254,6 +366,34 @@ class Tier1500x:
             chash = blake_hash(ctext.encode("utf-8"))[:12]
             chunks.append(Chunk(id=chash, text=ctext, tokens=toks, simhash=simhash64(toks)))
         return chunks
+
+    def _select_sentences_greedy(self, ordered_chunks: list[Chunk], budget: int) -> tuple[list[str], int]:
+        """
+        Greedy sentence-level selection fallback when chunk-level selection fails.
+
+        Args:
+            ordered_chunks: Salience-ordered chunks to extract sentences from
+            budget: Token budget to respect
+
+        Returns:
+            Tuple of (selected_sentences, tokens_used)
+        """
+        all_sentences = []
+        for chunk in ordered_chunks:
+            sents = self.sentence_split(chunk.text)
+            all_sentences.extend(sents)
+
+        if all_sentences:
+            selected = []
+            used_tokens = 0
+            for sent in all_sentences:
+                sent_tokens = count_tokens(sent)
+                if used_tokens + sent_tokens <= budget:
+                    selected.append(sent)
+                    used_tokens += sent_tokens
+
+            return selected, used_tokens
+        return [], 0
 
     def dedup(self, chunks: list[Chunk], hamm_thresh: int = 3) -> list[Chunk]:
         seen: list[int] = []
@@ -350,9 +490,15 @@ class Tier1500x:
         sal = self.salience(chunks, anchors)
 
         total_tokens = count_tokens(norm)
-        l1_budget = max(64, int(total_tokens * self.l1_ratio))
-        l2_budget = max(256, int(total_tokens * self.l2_ratio))
-        l3_budget = max(1024, int(total_tokens * self.l3_ratio))
+        # Budget calculations use correct percentage ratios
+        # Minimums prevent excessive compression on tiny content
+        l1_budget = max(16, int(total_tokens * self.l1_ratio))  # L1: 15% retention
+        l2_budget = max(32, int(total_tokens * self.l2_ratio))  # L2: 50% retention
+        l3_budget = max(64, int(total_tokens * self.l3_ratio))  # L3: 70% retention
+
+        # DEBUG: Log budget calculation
+        print(f"DEBUG BUILD_LAYERS: total_tokens={total_tokens}, l1_ratio={self.l1_ratio}, l2_ratio={self.l2_ratio}")
+        print(f"DEBUG BUILD_LAYERS: l1_budget={l1_budget}, l2_budget={l2_budget}, l3_budget={l3_budget}")
 
         # L3: top chunks by salience until budget
         ordered = sorted(chunks, key=lambda c: (-sal.get(c.id, 0.0), c.id))
@@ -364,41 +510,59 @@ class Tier1500x:
             l3_sents.append({"text": c.text, "chunk_id": c.id})
             used_tokens += count_tokens(c.text)
 
-        # L2: abstracts per coarse section (every N chunks)
-        l2_parts = []
-        section_size = 8
-        for s in range(0, len(ordered), section_size):
-            sec = ordered[s : s + section_size]
-            top = sorted(sec, key=lambda c: -sal.get(c.id, 0.0))[:2]
-            abstract = " ".join([t.text.split(". ")[0] for t in top if t.text])
-            l2_parts.append(f"## Section {1 + s // section_size}\n{abstract}")
-        l2_text = "\n\n".join(l2_parts)
-        if count_tokens(l2_text) > l2_budget:
-            # trim naively
-            toks = _simple_tokens(l2_text)
-            l2_text = " ".join(toks[: int(l2_budget / 1.3)])
+        # L2: balanced selection of top chunks (50% target retention)
+        # Use sentence-level selection when chunks exceed budget
+        l2_chunks = []
+        used_tokens_l2 = 0
 
-        # L1: skeleton bullets from anchors (entities + quantities)
-        by_type = defaultdict(list)
-        for a in anchors:
-            by_type[a.type].append(a.surface)
-        bullets = []
+        # Debug: Log chunk and budget info
+        logger.debug(
+            f"L2 layer construction: {len(ordered)} chunks, budget={l2_budget}, "
+            + f"chunk_token_sizes=[{', '.join(str(count_tokens(c.text)) for c in ordered[:5])}...]"
+        )
 
-        def uniq(seq: list[Any]) -> Any:
-            seen = set()
-            for x in seq:
-                if x not in seen:
-                    seen.add(x)
-                    yield x
+        # Try chunk-level first (preferred for coherence)
+        for c in ordered:
+            chunk_tokens = count_tokens(c.text)
+            if used_tokens_l2 + chunk_tokens <= l2_budget:
+                l2_chunks.append(c.text)
+                used_tokens_l2 += chunk_tokens
 
-        for ety in it.islice(uniq(by_type["entity"]), 0, 12):
-            bullets.append(f"- {ety}")
-        for qty in it.islice(uniq(by_type["quantity"]), 0, 8):
-            bullets.append(f"- {qty}")
-        l1_text = "\n".join(bullets)
-        if count_tokens(l1_text) > l1_budget:
-            toks = _simple_tokens(l1_text)
-            l1_text = " ".join(toks[: int(l1_budget / 1.3)])
+        logger.debug(f"L2 chunk-level: selected {len(l2_chunks)} chunks, {used_tokens_l2}/{l2_budget} tokens")
+
+        # If no chunks fit, fall back to sentence-level selection
+        if not l2_chunks and ordered:
+            logger.debug(f"L2 chunk-level failed, using sentence-level selection (budget={l2_budget})")
+            l2_chunks, used_tokens_l2 = self._select_sentences_greedy(ordered, l2_budget)
+        else:
+            pass
+        l2_text = " ".join(l2_chunks) if l2_chunks else ""
+        # Debug logging for empty L2 detection
+        if not l2_text and chunks:
+            chunk_sizes = [count_tokens(c.text) for c in chunks]
+            logger.warning(
+                f"L2 layer is empty despite having {len(chunks)} chunks (budget={l2_budget}, "
+                + f"chunk_sizes={chunk_sizes[:5]}, smallest={min(chunk_sizes) if chunk_sizes else 0})"
+            )
+
+        # L1: ultra-compressed selection (15% target retention)
+        # Select highest-salience chunks until budget
+        l1_chunks = []
+        used_tokens_l1 = 0
+        for c in ordered:
+            chunk_tokens = count_tokens(c.text)
+            if used_tokens_l1 + chunk_tokens > l1_budget:
+                continue
+            l1_chunks.append(c.text)
+            used_tokens_l1 += chunk_tokens
+
+        # If no chunks fit, fall back to sentence-level selection
+        if not l1_chunks and ordered:
+            logger.debug(f"L1 chunk-level failed, using sentence-level selection (budget={l1_budget})")
+            l1_chunks, used_tokens_l1 = self._select_sentences_greedy(ordered, l1_budget)
+        else:
+            pass
+        l1_text = " ".join(l1_chunks) if l1_chunks else ""
 
         manifest = {
             "total_tokens": total_tokens,
@@ -581,10 +745,64 @@ class Tier3Hierarchical:
 
 @dataclass
 class CompressionResult:
+    # Tier-1 structural layers (deterministic extraction)
     l1: str
     l2: str
     l3: str
+
+    # Tier-3 hierarchical layers (LLMLingua if available, else fallback)
+    tier3_l1: str
+    tier3_l2: str
+    tier3_l3: str
+
     manifest: dict[str, Any]
+    original_token_count: int = 0
+
+    def select_layer(self, target_ratio: float = 0.5) -> str:
+        """
+        Deterministically select compression layer based on target ratio.
+
+        Args:
+            target_ratio: Target compression ratio (0.0 = max compression, 1.0 = no compression)
+                         Default 0.5 = 50% tokens remaining (50% compression)
+
+        Returns:
+            Selected layer content as string
+        """
+        if self.original_token_count == 0:
+            # Fallback: use token counts from actual content
+            orig_tokens = max(
+                count_tokens(self.l3) / 0.05,  # Assume L3 is ~5% of original
+                count_tokens(self.tier3_l3) * 20,  # Rough heuristic
+                1000,  # Minimum assumed size
+            )
+        else:
+            orig_tokens = self.original_token_count
+
+        target_tokens = int(orig_tokens * target_ratio)
+
+        # Calculate layer token counts
+        layers = [
+            (count_tokens(self.tier3_l1), self.tier3_l1, "tier3_l1"),
+            (count_tokens(self.tier3_l2), self.tier3_l2, "tier3_l2"),
+            (count_tokens(self.tier3_l3), self.tier3_l3, "tier3_l3"),
+            (count_tokens(self.l1), self.l1, "l1"),
+            (count_tokens(self.l2), self.l2, "l2"),
+            (count_tokens(self.l3), self.l3, "l3"),
+        ]
+
+        # Sort by token count ascending
+        layers_sorted = sorted(layers, key=lambda x: x[0])
+
+        # Select layer closest to target without exceeding
+        best_layer = layers_sorted[-1]  # Default to largest layer
+        for tokens, content, name in layers_sorted:
+            if tokens >= target_tokens:
+                best_layer = (tokens, content, name)
+                break
+
+        logger.debug(f"Selected layer {best_layer[2]} with {best_layer[0]} tokens (target: {target_tokens})")
+        return best_layer[1]
 
 
 class SeraphCompressor:
@@ -603,9 +821,9 @@ class SeraphCompressor:
     def __init__(
         self,
         seed: int = 7,
-        l1_ratio: float = 0.02,
-        l2_ratio: float = 0.01,
-        l3_ratio: float = 0.05,
+        l1_ratio: float = 0.15,  # 15% retention (ultra-compressed)
+        l2_ratio: float = 0.50,  # 50% retention (target layer)
+        l3_ratio: float = 0.70,  # 70% retention (light compression)
         embedding_service: Any = None,
     ):
         """
@@ -681,10 +899,16 @@ class SeraphCompressor:
             }
 
             result = CompressionResult(
-                l1=(tier1["L1"] or hcomp["L1"]),
-                l2=(tier1["L2"] or hcomp["L2"]),
-                l3=(hcomp["L3"] or l3_concat),
+                # Tier-1 structural layers (preserve originals)
+                l1=tier1["L1"],
+                l2=tier1["L2"],
+                l3=l3_concat,  # Tier-1 L3 as concatenated string
+                # Tier-3 hierarchical layers (LLMLingua or fallback)
+                tier3_l1=hcomp["L1"],
+                tier3_l2=hcomp["L2"],
+                tier3_l3=hcomp["L3"],
                 manifest=manifest,
+                original_token_count=count_tokens(corpus_text),
             )
 
             logger.debug(
@@ -752,7 +976,16 @@ class SeraphCompressor:
             raise ValueError("out_path cannot be empty")
 
         try:
-            payload = {"manifest": res.manifest, "L1": res.l1, "L2": res.l2, "L3": res.l3}
+            payload = {
+                "manifest": res.manifest,
+                "L1": res.l1,
+                "L2": res.l2,
+                "L3": res.l3,
+                "tier3_L1": res.tier3_l1,
+                "tier3_L2": res.tier3_l2,
+                "tier3_L3": res.tier3_l3,
+                "original_token_count": res.original_token_count,
+            }
             out_path = str(out_path)
 
             with gzip.open(out_path, "wt", encoding="utf-8") as f:
@@ -836,7 +1069,16 @@ async def _async_main(argv: list[str] | None = None) -> None:
     elif args.cmd == "query":
         with gzip.open(args.pack_path, "rt", encoding="utf-8") as f:
             payload = json.load(f)
-        res = CompressionResult(payload["L1"], payload["L2"], payload["L3"], payload["manifest"])
+        res = CompressionResult(
+            l1=payload["L1"],
+            l2=payload["L2"],
+            l3=payload["L3"],
+            tier3_l1=payload.get("tier3_L1", payload["L1"]),
+            tier3_l2=payload.get("tier3_L2", payload["L2"]),
+            tier3_l3=payload.get("tier3_L3", payload["L3"]),
+            manifest=payload["manifest"],
+            original_token_count=payload.get("original_token_count", 0),
+        )
         sc = SeraphCompressor()
         top = sc.query(res, args.question, k=args.k)
         for s, txt in top:

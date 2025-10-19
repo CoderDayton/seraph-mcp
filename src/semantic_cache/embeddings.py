@@ -4,7 +4,7 @@ Semantic Cache Embedding Generator (Unified)
 This module provides embeddings for semantic cache using the unified
 provider-backed embedding service from context_optimization.
 
-BREAKING CHANGE (v2.0.0):
+Initial Release (v1.0.0):
 - Removed local (sentence-transformers) support to reduce dependencies
 - All embeddings now go through provider-backed services
 - Supported providers: openai, openai-compatible, gemini

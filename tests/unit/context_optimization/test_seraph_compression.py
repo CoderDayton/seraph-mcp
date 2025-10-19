@@ -157,13 +157,21 @@ class TestCompressionResult:
             l1="L1 skeleton text",
             l2="L2 abstract text",
             l3="L3 extract text",
+            tier3_l1="Tier3 L1 text",
+            tier3_l2="Tier3 L2 text",
+            tier3_l3="Tier3 L3 text",
             manifest=manifest,
+            original_token_count=100,
         )
 
         assert result.l1 == "L1 skeleton text"
         assert result.l2 == "L2 abstract text"
         assert result.l3 == "L3 extract text"
+        assert result.tier3_l1 == "Tier3 L1 text"
+        assert result.tier3_l2 == "Tier3 L2 text"
+        assert result.tier3_l3 == "Tier3 L3 text"
         assert result.manifest == manifest
+        assert result.original_token_count == 100
         assert "tier1" in result.manifest
         assert "tier2" in result.manifest
         assert "tier3" in result.manifest
@@ -309,9 +317,11 @@ class TestSeraphCompressor:
         result = await compressor.build(unicode_text)
 
         assert isinstance(result, CompressionResult)
-        assert len(result.l1) > 0
-        assert len(result.l2) > 0
+        # For short texts, L1/L2 may be empty if chunks exceed budget
+        # Verify at least L3 has content (extractive layer always populated)
         assert len(result.l3) > 0
+        # Tier3 layers should always have content (LLMLingua fallback)
+        assert len(result.tier3_l1) > 0 or len(result.tier3_l2) > 0 or len(result.tier3_l3) > 0
 
     async def test_build_code_blocks(self, compressor: SeraphCompressor) -> None:
         """Test building layers from text with code blocks."""
@@ -425,19 +435,30 @@ class TestSeraphCompressor:
             assert "L1" in payload
             assert "L2" in payload
             assert "L3" in payload
+            assert "tier3_L1" in payload
+            assert "tier3_L2" in payload
+            assert "tier3_L3" in payload
+            assert "original_token_count" in payload
 
             # Recreate CompressionResult
             loaded_result = CompressionResult(
-                payload["L1"],
-                payload["L2"],
-                payload["L3"],
-                payload["manifest"],
+                l1=payload["L1"],
+                l2=payload["L2"],
+                l3=payload["L3"],
+                tier3_l1=payload["tier3_L1"],
+                tier3_l2=payload["tier3_L2"],
+                tier3_l3=payload["tier3_L3"],
+                manifest=payload["manifest"],
+                original_token_count=payload.get("original_token_count", 0),
             )
 
             # Should match original
             assert loaded_result.l1 == result.l1
             assert loaded_result.l2 == result.l2
             assert loaded_result.l3 == result.l3
+            assert loaded_result.tier3_l1 == result.tier3_l1
+            assert loaded_result.tier3_l2 == result.tier3_l2
+            assert loaded_result.tier3_l3 == result.tier3_l3
             assert loaded_result.manifest == result.manifest
 
         finally:

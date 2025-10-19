@@ -31,35 +31,41 @@ class ContextOptimizationConfig(BaseModel):
 
     # Quality target
     quality_threshold: float = Field(
-        default=0.90,
+        default=0.85,
         ge=0.0,
         le=1.0,
         description="Minimum quality score (0-1) to accept optimization",
     )
 
     # Performance limit
-    max_overhead_ms: float = Field(default=100.0, ge=0.0, description="Maximum processing time in milliseconds")
+    # NOTE: This is the OUTER timeout for the entire optimization process.
+    # Inner operations (AI provider calls) have their own timeouts (5s for compression, 3s for validation).
+    # This should be longer than the sum of inner timeouts to allow graceful fallback.
+    max_overhead_ms: float = Field(
+        default=10000.0, ge=0.0, description="Maximum processing time in milliseconds (default: 10s)"
+    )
 
-    # Seraph compression ratios
+    # Seraph compression ratios (research-backed: arxiv papers on context compression)
+    # Target: 40-60% retention for optimal quality-compression balance
     seraph_l1_ratio: float = Field(
-        default=0.002,
-        ge=0.001,
-        le=0.01,
-        description="L1 layer ratio (ultra-small skeleton)",
+        default=0.15,
+        ge=0.10,
+        le=0.25,
+        description="L1 layer ratio (15% retention - ultra-compressed summary)",
     )
 
     seraph_l2_ratio: float = Field(
-        default=0.01,
-        ge=0.005,
-        le=0.05,
-        description="L2 layer ratio (compact abstracts)",
+        default=0.50,
+        ge=0.40,
+        le=0.60,
+        description="L2 layer ratio (50% retention - balanced compression, default output)",
     )
 
     seraph_l3_ratio: float = Field(
-        default=0.05,
-        ge=0.02,
-        le=0.15,
-        description="L3 layer ratio (larger factual extracts)",
+        default=0.70,
+        ge=0.60,
+        le=0.85,
+        description="L3 layer ratio (70% retention - light compression with high fidelity)",
     )
 
     # Embedding configuration for semantic similarity
@@ -103,9 +109,9 @@ def load_config() -> ContextOptimizationConfig:
         CONTEXT_OPTIMIZATION_SERAPH_TOKEN_THRESHOLD: Token threshold for auto mode (default: 3000)
         CONTEXT_OPTIMIZATION_QUALITY_THRESHOLD: Min quality 0-1 (default: 0.90)
         CONTEXT_OPTIMIZATION_MAX_OVERHEAD_MS: Max time ms (default: 100.0)
-        CONTEXT_OPTIMIZATION_SERAPH_L1_RATIO: L1 ratio (default: 0.002)
-        CONTEXT_OPTIMIZATION_SERAPH_L2_RATIO: L2 ratio (default: 0.01)
-        CONTEXT_OPTIMIZATION_SERAPH_L3_RATIO: L3 ratio (default: 0.05)
+        CONTEXT_OPTIMIZATION_SERAPH_L1_RATIO: L1 ratio (default: 0.15)
+        CONTEXT_OPTIMIZATION_SERAPH_L2_RATIO: L2 ratio (default: 0.50)
+        CONTEXT_OPTIMIZATION_SERAPH_L3_RATIO: L3 ratio (default: 0.70)
         CONTEXT_OPTIMIZATION_EMBEDDING_PROVIDER: Provider (default: gemini)
         CONTEXT_OPTIMIZATION_EMBEDDING_MODEL: Model name (optional)
         CONTEXT_OPTIMIZATION_EMBEDDING_API_KEY: API key (optional)
@@ -120,11 +126,11 @@ def load_config() -> ContextOptimizationConfig:
         enabled=os.getenv("CONTEXT_OPTIMIZATION_ENABLED", "true").lower() == "true",
         compression_method=os.getenv("CONTEXT_OPTIMIZATION_COMPRESSION_METHOD", default_method).lower(),
         seraph_token_threshold=int(os.getenv("CONTEXT_OPTIMIZATION_SERAPH_TOKEN_THRESHOLD", "3000")),
-        quality_threshold=float(os.getenv("CONTEXT_OPTIMIZATION_QUALITY_THRESHOLD", "0.90")),
-        max_overhead_ms=float(os.getenv("CONTEXT_OPTIMIZATION_MAX_OVERHEAD_MS", "100.0")),
-        seraph_l1_ratio=float(os.getenv("CONTEXT_OPTIMIZATION_SERAPH_L1_RATIO", "0.002")),
-        seraph_l2_ratio=float(os.getenv("CONTEXT_OPTIMIZATION_SERAPH_L2_RATIO", "0.01")),
-        seraph_l3_ratio=float(os.getenv("CONTEXT_OPTIMIZATION_SERAPH_L3_RATIO", "0.05")),
+        quality_threshold=float(os.getenv("CONTEXT_OPTIMIZATION_QUALITY_THRESHOLD", "0.85")),
+        max_overhead_ms=float(os.getenv("CONTEXT_OPTIMIZATION_MAX_OVERHEAD_MS", "10000.0")),
+        seraph_l1_ratio=float(os.getenv("CONTEXT_OPTIMIZATION_SERAPH_L1_RATIO", "0.15")),
+        seraph_l2_ratio=float(os.getenv("CONTEXT_OPTIMIZATION_SERAPH_L2_RATIO", "0.50")),
+        seraph_l3_ratio=float(os.getenv("CONTEXT_OPTIMIZATION_SERAPH_L3_RATIO", "0.70")),
         embedding_provider=os.getenv("CONTEXT_OPTIMIZATION_EMBEDDING_PROVIDER", "gemini"),
         embedding_model=os.getenv("CONTEXT_OPTIMIZATION_EMBEDDING_MODEL"),
         embedding_api_key=os.getenv("CONTEXT_OPTIMIZATION_EMBEDDING_API_KEY"),

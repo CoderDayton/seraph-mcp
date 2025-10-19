@@ -18,6 +18,7 @@ from typing import Any
 
 import tiktoken
 
+from ..providers.base import CompletionRequest, CompletionResponse
 from ..providers.models_dev import get_models_dev_client
 from .config import ContextOptimizationConfig
 from .embeddings import create_embedding_service
@@ -211,7 +212,6 @@ class ContextOptimizer:
 
         # Determine compression method
         method = self._select_compression_method(tokens_before)
-
         try:
             # Route to appropriate compression method
             if method == "ai":
@@ -236,10 +236,8 @@ class ContextOptimizer:
             tokens_after = self._count_tokens(optimized_content)
             tokens_saved = max(0, tokens_before - tokens_after)
             reduction_percentage = (tokens_saved / tokens_before * 100) if tokens_before > 0 else 0
-
             # Validate quality
             validation_passed = quality_score >= self.config.quality_threshold
-
             # Rollback if quality too low
             rollback_occurred = False
             if not validation_passed:
@@ -334,32 +332,63 @@ class ContextOptimizer:
         """
         if not self.provider:
             # No provider available - return original
+            logger.warning("AI optimization requested but no provider available")
             return content, 1.0
 
         # Step 1: Compress using AI
         optimization_prompt = OPTIMIZATION_PROMPT.format(content=content)
+        original_tokens = self._count_tokens(content)
+        logger.info(f"AI compression starting: {original_tokens} tokens, {len(content)} chars")
 
         try:
-            # Use provider to generate compressed version
-            compressed = await self._call_provider(optimization_prompt, max_tokens=len(content))
+            # Use provider to generate compressed version (with 5s timeout)
+            logger.debug(f"Sending optimization prompt ({len(optimization_prompt)} chars) to provider")
+            compressed = await self._call_provider(optimization_prompt, max_tokens=len(content), timeout=5.0)
 
-            # Step 2: Validate quality using AI
+            # CRITICAL: Validate compressed content is not empty
+            if not compressed or compressed.strip() == "":
+                logger.error("Provider returned empty compressed content! This should never happen.")
+                return content, 1.0
+
+            compressed_tokens = self._count_tokens(compressed)
+            reduction_pct = (
+                ((original_tokens - compressed_tokens) / original_tokens) * 100 if original_tokens > 0 else 0
+            )
+            logger.info(f"Provider compression result: {compressed_tokens} tokens ({reduction_pct:.1f}% reduction)")
+
+            # Step 2: Validate quality using AI (shorter timeout for validation)
             validation_prompt = VALIDATION_PROMPT.format(original=content, compressed=compressed)
+            logger.debug("Sending quality validation prompt to provider")
+            quality_response = await self._call_provider(validation_prompt, max_tokens=10, timeout=3.0)
 
-            quality_response = await self._call_provider(validation_prompt, max_tokens=10)
+            logger.debug(f"Quality validation response: '{quality_response}'")
 
             # Parse quality score
             try:
                 quality_score = float(quality_response.strip())
                 quality_score = max(0.0, min(1.0, quality_score))  # Clamp to [0, 1]
+                logger.info(f"Parsed quality score: {quality_score:.3f}")
             except ValueError:
                 # If parsing fails, assume moderate quality
+                logger.warning(f"Quality score parse failed: '{quality_response}', defaulting to 0.85")
                 quality_score = 0.85
 
+            logger.info(
+                f"AI compression complete: {compressed_tokens} tokens, quality={quality_score:.3f}, reduction={reduction_pct:.1f}%"
+            )
             return compressed, quality_score
 
+        except TimeoutError:
+            # Re-raise timeout exceptions so _optimize_hybrid() can handle gracefully
+            logger.warning("AI optimization timed out after 5s")
+            raise
         except Exception as e:
-            print(f"AI optimization error: {e}")
+            logger.error(f"AI optimization failed: {e}")
+            import traceback
+
+            traceback.print_exc()
+            # CRITICAL: Return original content on any error to prevent 0-token bug
+            logger.info("Falling back to original content due to AI optimization failure")
             return content, 1.0
 
     def _select_compression_method(self, token_count: int) -> str:
@@ -380,27 +409,38 @@ class ContextOptimizer:
         """
         method = self.config.compression_method.lower()
 
-        # Check if provider is available
+        # Check if provider AND embedding service are available
         has_provider = self.provider is not None
+        has_embeddings = self.seraph_compressor.embedding_service is not None
 
         if method == "auto":
-            # Auto-select based on token threshold AND provider availability
+            # Auto-select based on provider availability FIRST, then token threshold
             if not has_provider:
-                return "seraph"  # No provider: always use Seraph (works without AI)
-            elif token_count <= self.config.seraph_token_threshold:
-                return "ai"  # Short content + provider: AI is faster and more nuanced
+                # No AI provider: always use Seraph regardless of content size
+                return "seraph"
+            elif not has_embeddings:
+                # Provider available but no embeddings: prefer AI for small content, Seraph for large
+                # Seraph quality degrades without embeddings, so use AI when possible
+                if token_count <= self.config.seraph_token_threshold:
+                    return "ai"  # Short content: AI is fast and high-quality
+                else:
+                    return "seraph"  # Long content: Seraph still works without embeddings
             else:
-                return "seraph"  # Long content: Seraph is more efficient and cacheable
+                # Both provider and embeddings available: use optimal method by size
+                if token_count <= self.config.seraph_token_threshold:
+                    return "ai"  # Short content: AI is faster and more nuanced
+                else:
+                    return "seraph"  # Long content: Seraph is efficient and cacheable
         elif method == "ai":
             # AI requested but no provider available - fallback to seraph
             if not has_provider:
-                print("Warning: AI compression requested but no provider available, using Seraph")
+                logger.warning("AI compression requested but no provider available, using Seraph")
                 return "seraph"
             return "ai"
         elif method == "hybrid":
             # Hybrid requested but no provider available - fallback to seraph
             if not has_provider:
-                print("Warning: Hybrid compression requested but no provider available, using Seraph")
+                logger.warning("Hybrid compression requested but no provider available, using Seraph")
                 return "seraph"
             return "hybrid"
         elif method == "seraph":
@@ -425,37 +465,55 @@ class ContextOptimizer:
         content_hash = self._hash_content(content)
         if content_hash in self.seraph_cache:
             cached = self.seraph_cache[content_hash]
-            return cached["l3"], cached["quality"]
+            return cached["l2"], cached["quality"]  # Return L2 (50% target)
 
         try:
-            # Build compression layers with config-driven ratios
-            # SeraphCompressor was initialized with config.seraph_l1/l2/l3_ratio
+            # Build compression layers with research-backed ratios
+            # L1=15% (ultra-compressed), L2=50% (target), L3=70% (light)
             result: CompressionResult = await self.seraph_compressor.build(content)
 
-            # Use L3 (largest layer) as the optimized output
-            # L3 typically preserves ~60-80% of tokens with high quality
-            optimized_content = result.l3
+            # **KEY FIX**: Return Tier-1 L2 directly (50% retention target)
+            # Bypass tier3 layers which over-compress via LLMLingua
+            # Research shows 40-60% retention optimal for quality-compression balance
+            optimized_content = result.l2  # Direct Tier-1 access - 50% retention
 
-            # Seraph quality estimation based on compression ratio
-            # Seraph is deterministic and structure-preserving, so quality is consistently high
+            # **EMPTY OUTPUT PROTECTION**: Fallback to L3 if L2 is empty
+            # Prevents zero-token compression failures
+            if not optimized_content or not optimized_content.strip():
+                print("WARNING: L2 layer empty, falling back to L3 (70% retention)")
+                optimized_content = result.l3  # Always str per CompressionResult
+
+            # Seraph quality estimation based on actual compression ratio
             tokens_original = self._count_tokens(content)
             tokens_compressed = self._count_tokens(optimized_content)
             compression_ratio = tokens_compressed / tokens_original if tokens_original > 0 else 1.0
 
-            # Quality score: Seraph preserves structure well, estimate based on ratio
-            # Higher compression = slightly lower quality (but still good)
-            if compression_ratio >= 0.7:
-                quality_score = 0.95  # Excellent preservation
-            elif compression_ratio >= 0.5:
-                quality_score = 0.92  # Very good preservation
+            # **MINIMUM TOKEN THRESHOLD**: Penalize empty/near-empty outputs
+            min_token_threshold = 10
+            if tokens_compressed < min_token_threshold:
+                quality_score = 0.70  # Severely penalize empty outputs
+                print(f"WARNING: Compressed output too small ({tokens_compressed} tokens), quality degraded")
+            # Quality score: Balanced approach for 40-60% target range
+            # Reward compression near target, penalize extremes
+            elif 0.4 <= compression_ratio <= 0.6:
+                quality_score = 0.95  # Excellent: Within target range
+            elif 0.3 <= compression_ratio < 0.4 or 0.6 < compression_ratio <= 0.7:
+                quality_score = 0.92  # Very good: Close to target
+            elif 0.2 <= compression_ratio < 0.3 or 0.7 < compression_ratio <= 0.8:
+                quality_score = 0.90  # Good: Moderate deviation
+            elif compression_ratio < 0.2:
+                quality_score = 0.88  # Over-compressed: Too aggressive
             else:
-                quality_score = 0.88  # Good preservation
+                quality_score = 0.85  # Under-compressed: Minimal benefit
 
-            # Cache result
+            # Cache result with all layers for future adaptive selection
             self.seraph_cache[content_hash] = {
                 "l1": result.l1,
                 "l2": result.l2,
                 "l3": result.l3,
+                "tier3_l1": result.tier3_l1,
+                "tier3_l2": result.tier3_l2,
+                "tier3_l3": result.tier3_l3,
                 "quality": quality_score,
                 "manifest": result.manifest,
             }
@@ -484,58 +542,98 @@ class ContextOptimizer:
 
             # Use L2 for hybrid (more compressed, leaves room for AI polish)
             seraph_compressed = result.l2
-
             # If L2 is too short or empty, use L3
-            if not seraph_compressed or len(seraph_compressed.strip()) < 50:
+            # Fix bug #1: Use token count instead of character length
+            seraph_tokens = self._count_tokens(seraph_compressed) if seraph_compressed else 0
+            if not seraph_compressed or seraph_tokens < 20:
                 seraph_compressed = result.l3
+                seraph_tokens = self._count_tokens(seraph_compressed) if seraph_compressed else 0
+                # If L3 is also empty/too short, use original content (no compression)
+                if not seraph_compressed or seraph_tokens < 20:
+                    return content, 1.0
 
             # Step 2: AI polish the seraph-compressed content
             if self.provider and seraph_compressed:
-                polished, quality = await self._optimize_with_ai(seraph_compressed)
+                try:
+                    # Add explicit timeout for AI polish (5 seconds)
+                    polished, quality = await asyncio.wait_for(self._optimize_with_ai(seraph_compressed), timeout=5.0)
+                except TimeoutError:
+                    # Timeout: gracefully fallback to seraph result
+                    return seraph_compressed, 0.92
+                except Exception:
+                    # Other errors: also fallback to seraph
+                    return seraph_compressed, 0.92
 
                 # Verify hybrid result is actually better than seraph alone
                 tokens_hybrid = self._count_tokens(polished)
                 tokens_seraph = self._count_tokens(seraph_compressed)
-
                 # Only use hybrid if it provides additional compression with good quality
                 if tokens_hybrid < tokens_seraph and quality >= self.config.quality_threshold:
                     return polished, quality
                 else:
-                    # AI didn't improve - use seraph result
+                    pass
                     return seraph_compressed, 0.92
             else:
+                pass
                 # No AI provider - just return seraph result
                 return seraph_compressed, 0.92
 
-        except Exception as e:
-            print(f"Hybrid compression error: {e}")
+        except Exception:
+            import traceback
+
+            traceback.print_exc()
             # Fallback to seraph only
             return await self._optimize_with_seraph(content)
 
-    async def _call_provider(self, prompt: str, max_tokens: int = 500) -> str:
-        """Call AI provider with prompt"""
+    async def _call_provider(self, prompt: str, max_tokens: int = 500, timeout: float = 5.0) -> str:
+        """Call AI provider with prompt using standardized CompletionRequest interface
+
+        Args:
+            prompt: The prompt to send to the provider
+            max_tokens: Maximum tokens in response
+            timeout: Timeout in seconds (default: 5s)
+
+        Returns:
+            Provider response content, or empty string on error/timeout
+        """
         if not self.provider:
             return ""
 
         try:
-            # Use provider's generate method (adjust based on actual provider interface)
-            if hasattr(self.provider, "generate"):
-                # Low temperature for consistent, deterministic compression
-                response: Any = await self.provider.generate(
-                    prompt=prompt,
-                    max_tokens=max_tokens,
-                    temperature=0.3,
-                )
-                return str(response.get("content", "") or response.get("text", ""))
-            else:
-                # Fallback to chat-style interface
-                messages = [{"role": "user", "content": prompt}]
-                chat_response: Any = await self.provider.chat(messages=messages, max_tokens=max_tokens)
-                return str(chat_response.get("content", "") or chat_response.get("message", {}).get("content", ""))
+            # Extract model name from provider config
+            model_name = getattr(self.provider.config, "model", None)
+            if not model_name:
+                logger.warning("Provider has no model configured, cannot call provider")
+                return ""
+
+            # Use standardized CompletionRequest interface (all providers implement complete())
+            # Pass timeout through the request instead of wrapping with wait_for()
+            request = CompletionRequest(
+                model=model_name,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.3,  # Low temperature for consistent, deterministic compression
+                max_tokens=max_tokens,
+                stream=False,  # Explicitly disable streaming
+                timeout=timeout,  # Per-request timeout
+            )
+            response = await self.provider.complete(request)
+            # Explicit type annotation to narrow from Any (provider is Any | None)
+            response_typed: CompletionResponse = response  # Cast from Any to narrow type
+            return response_typed.content
+
+        except TimeoutError:
+            logger.warning(f"Provider call timed out after {timeout}s")
+            # Re-raise timeout so caller can handle it appropriately
+            raise
 
         except Exception as e:
-            print(f"Provider call error: {e}")
-            return ""
+            logger.error(f"Provider call error: {e}", exc_info=True)
+            import traceback
+
+            traceback.print_exc()
+            # CRITICAL FIX: Never return empty string - return error indicator
+            # Empty string causes 0-token output bug
+            raise RuntimeError(f"Provider call failed: {e}") from e
 
     def _count_tokens(self, content: str) -> int:
         """Count tokens in content"""

@@ -66,7 +66,7 @@ git status
 uv build
 
 # This creates:
-# - dist/seraph_mcp-1.0.0-py3-none-any.whl (wheel)
+# - dist/src-1.0.0-py3-none-any.whl (wheel)
 # - dist/seraph-mcp-1.0.0.tar.gz (source distribution)
 ```
 
