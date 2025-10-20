@@ -42,7 +42,7 @@ class ObservabilityAdapter:
         self,
         enable_metrics: bool = True,
         enable_tracing: bool = True,
-        metrics_db_path: str = "metrics.db",
+        metrics_db_path: str = "./data/metrics.db",
     ):
         """
         Initialize observability adapter.
@@ -417,7 +417,7 @@ def get_observability() -> ObservabilityAdapter:
 def initialize_observability(
     enable_metrics: bool = True,
     enable_tracing: bool = True,
-    metrics_db_path: str = "metrics.db",
+    metrics_db_path: str = "./data/metrics.db",
 ) -> ObservabilityAdapter:
     """
     Initialize the global observability adapter.

@@ -92,7 +92,7 @@ class ObservabilityConfig(BaseModel):
     )
 
     # SQLite-specific (for simple backend persistence)
-    metrics_db_path: str = Field(default="metrics.db", description="Path to SQLite metrics database")
+    metrics_db_path: str = Field(default="./data/metrics.db", description="Path to SQLite metrics database")
 
     # Prometheus-specific
     prometheus_path: str = Field(default="/metrics", description="Prometheus metrics path")

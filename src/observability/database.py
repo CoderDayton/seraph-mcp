@@ -30,7 +30,7 @@ class MetricsDatabase:
     - Graceful shutdown
     """
 
-    def __init__(self, db_path: str = "metrics.db"):
+    def __init__(self, db_path: str = "./data/metrics.db"):
         """
         Initialize metrics database.
 
