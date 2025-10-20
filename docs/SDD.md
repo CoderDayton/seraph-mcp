@@ -1,6 +1,12 @@
 # Seraph MCP — System Design Document (SDD)
-Version: 1.0.0
+Version: 1.0.5
 Scope: This SDD reflects the current codebase under seraph-mcp/src as shipped in this repository. It supersedes previous drafts and is intended to be source-of-truth for architecture, configuration, features, and operational behavior.
+
+## Recent Changes (v1.0.5)
+- **Two-Layer Compression Architecture**: Added MCP protocol-level compression (Layer 1) via `CompressionMiddleware`
+- **Cross-Server Proxy Mode**: Unified entry point with conditional backend mounting via `proxy.fastmcp.json`
+- **SQLite-Only Observability**: Simplified metrics persistence (removed Prometheus/Datadog backends)
+- **Automatic Quality Scoring**: Dynamic compression ratios based on content characteristics (structure, entropy, redundancy, semantics)
 
 Table of Contents
 - Purpose and Goals
@@ -34,16 +40,25 @@ Purpose and Goals
 --------------------------------------------------------------------------------
 Architectural Decisions
 - Monolithic with Feature Flags:
-  - Single entrypoint server at src/server.py.
+  - Single entrypoint: `seraph-mcp` command (src/server.py).
+  - Auto-detects server vs proxy mode based on config file presence.
   - Feature flags control optional modules: semantic_cache, context_optimization, budget_management, quality_preservation (placeholder).
   - Observability and cache each have a single, canonical adapter.
 
+- Entry Point Architecture (Hybrid):
+  - **Always runs with local tools** (cache, budget, optimization)
+  - **Conditionally mounts backends** if `proxy.fastmcp.json` exists
+  - **Single process, unified middleware** - compression applies to both local + backend tools
+  - **No mode switching** - deterministic behavior based on config presence
+  - Single command for all use cases: `seraph-mcp`
+
 - Transport:
-  - Model Context Protocol (MCP) stdio via fastmcp.Fas tMCP.
+  - Model Context Protocol (MCP) stdio via fastmcp.FastMCP.
   - No HTTP server in the core runtime.
 
 - Determinism:
   - Commands are deterministic and traceable.
+  - Mode selection based on explicit file presence (no implicit behavior).
   - One single-source-of-truth configuration with typed Pydantic schemas.
 
 --------------------------------------------------------------------------------
@@ -930,12 +945,13 @@ mcp.add_middleware(
 └────────────────────────────────┬────────────────────────────────────┘
                                  ↓
 ┌─────────────────────────────────────────────────────────────────────┐
-│ Seraph Proxy (seraph-proxy command)                                │
+│ Seraph Proxy (seraph-mcp --auto-detects proxy mode)               │
 │ ──────────────────────────────────────────────────────────────────  │
-│ File:        src/proxy.py (203 lines)                              │
-│ Entry Point: seraph-proxy (console script in pyproject.toml:82)    │
+│ File:        src/proxy.py (proxy logic)                           │
+│             src/server.py (unified entry point)                    │
+│ Entry Point: seraph-mcp (single command, mode auto-detected)      │
 │ Transport:   stdio (standard MCP protocol)                         │
-│ Config:      proxy.fastmcp.json (mcpServers format)                │
+│ Config:      proxy.fastmcp.json (presence triggers proxy mode)     │
 │                                                                     │
 │ ┌─────────────────────────────────────────────────────────────┐   │
 │ │ CompressionMiddleware (Layer 1)                            │   │
@@ -1019,61 +1035,113 @@ def create_proxy() -> FastMCP:
 - **Validation**: Checks for `mcpServers` key and valid JSON structure
 - **Error Handling**: Falls back to next config source on file not found/invalid JSON
 
-**3. CLI Entry Point** (`src/proxy.py:160-203`):
+**3. CLI Entry Point** (`src/server.py:main()`):
 ```python
 def main() -> None:
-    """Entry point for seraph-proxy console script."""
-    try:
-        proxy = create_proxy()
-        logger.info("Starting Seraph proxy on stdio transport")
-        proxy.run(transport="stdio")
-    except Exception as e:
-        logger.error(f"Proxy startup failed: {e}")
-        sys.exit(1)
+    """
+    Unified entry point for seraph-mcp command.
+
+    Hybrid architecture (Per SDD §10.4.2):
+        - Always runs with local tools (cache, budget, optimization)
+        - Conditionally mounts backends if proxy.fastmcp.json exists
+        - Single process, unified middleware, transparent compression
+
+    No mode switching, no CLI flags - deterministic behavior based on config presence.
+
+    Architecture:
+        Seraph MCP (main) → 20 local tools always available
+                          ↓ (mount if proxy.fastmcp.json exists)
+                          → Backend Proxy → filesystem_*, github_*, postgres_*
+    """
+    from pathlib import Path
+
+    logger.info("=== Seraph MCP Server Starting ===")
+
+    # Check if backend mounting is needed
+    proxy_config_file = Path("proxy.fastmcp.json")
+
+    if proxy_config_file.exists():
+        # HYBRID MODE: Mount backends onto existing server
+        from .proxy import mount_backends_to_server
+
+        logger.info("Backend config detected: proxy.fastmcp.json")
+
+        try:
+            mount_backends_to_server(mcp)
+            logger.info("Hybrid architecture active: local tools + backend proxies")
+        except FileNotFoundError as e:
+            logger.error("Backend mounting failed: %s", e)
+            logger.warning("Continuing with local tools only")
+        except ValueError as e:
+            logger.error("Backend config validation error: %s", e)
+            logger.warning("Continuing with local tools only")
+        except Exception as e:
+            logger.error("Backend mounting error: %s", e, exc_info=True)
+            logger.warning("Continuing with local tools only")
+    else:
+        # LOCAL-ONLY MODE: Standard server with optimization tools
+        logger.info("No backend config - running with local tools only")
+
+    # Always run the unified server
+    logger.info("Starting unified Seraph MCP server with stdio transport")
+    mcp.run()
 ```
 
 **Installation**:
 ```bash
-# Install Seraph with proxy entry point
+# Install Seraph with unified entry point
 uv pip install -e .
 
 # Verify installation
-which seraph-proxy  # Should show installed script
+which seraph-mcp  # Single command for both modes
 ```
 
 **Usage**:
 
-**Option 1: Default Config** (`proxy.fastmcp.json` in project root):
-```json
+**Option 1: Hybrid Mode** (local tools + backends):
+```bash
+# Create backend config
+cat > proxy.fastmcp.json <<EOF
 {
   "mcpServers": {
     "filesystem": {
       "command": "npx",
       "args": ["-y", "@modelcontextprotocol/server-filesystem", "/home/user"]
+    },
+    "github": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-github"],
+      "env": {"GITHUB_PERSONAL_ACCESS_TOKEN": "ghp_xxx"}
     }
   }
 }
+EOF
+
+# Run - automatically mounts backends + local tools
+seraph-mcp
+# Available: cache_get, budget_check_status, filesystem_read_file, github_create_issue
 ```
 
-**Option 2: Custom Config Path**:
+**Option 2: Local-Only Mode** (no backends):
 ```bash
-export SERAPH_PROXY_CONFIG=/path/to/custom-proxy.json
-seraph-proxy
+# No proxy.fastmcp.json → runs with local tools only
+seraph-mcp
+# Available: cache_get, budget_check_status, count_tokens, etc.
 ```
 
 **Claude Desktop Integration** (`claude_desktop_config.json`):
 ```json
 {
   "mcpServers": {
-    "seraph-proxy": {
-      "command": "seraph-proxy",
-      "env": {
-        "SERAPH_PROXY_CONFIG": "/home/user/.seraph/proxy.fastmcp.json"
-      }
+    "seraph": {
+      "command": "seraph-mcp",
+      "args": [],
+      "env": {}
     }
   }
 }
 ```
+**Note**: Place `proxy.fastmcp.json` in working directory to enable backend mounting.
 
 **Observability**:
 - **Metrics Namespace**: `mcp.middleware.*` (same as standalone server Layer 1)
@@ -1085,10 +1153,11 @@ seraph-proxy
 - **Per-Backend Metrics**: Not currently supported (aggregated across all backends)
 
 **Graceful Degradation**:
-- Backend server failure: Proxy continues serving other backends
+- Backend mounting failure: Server continues with local tools only
+- Individual backend failure: Other backends remain available
 - Compression timeout (>10s): Returns uncompressed response
 - Compression error: Returns original content with logged warning
-- Config file missing: Falls back to next config source (3-tier fallback)
+- Config file missing: Runs with local tools (no backend mounting)
 
 **Performance Characteristics**:
 - **Startup Overhead**: ~100ms (lazy initialization of SeraphCompressor)
@@ -1111,10 +1180,16 @@ seraph-proxy
 - ✅ **Everything Else**: Any MCP server with stdio transport
 
 **Implementation Files**:
-- Proxy Server: `src/proxy.py` (203 lines)
-- Middleware: `src/context_optimization/mcp_middleware.py` (reused from Layer 1)
+- Backend Mounting: `src/proxy.py` (`mount_backends_to_server()`, config loading)
+- Unified Entry: `src/server.py:main()` (hybrid architecture logic)
+- Middleware: `src/context_optimization/mcp_middleware.py` (applies to both local + backend)
 - Config Example: `proxy.fastmcp.json` (sample with 3 backends)
-- Entry Point: `pyproject.toml:82` (`seraph-proxy` console script)
+- Entry Point: `pyproject.toml` (`seraph-mcp` console script)
+
+**Tool Naming Convention**:
+- **Local tools**: Unprefixed (e.g., `cache_get`, `budget_check_status`, `count_tokens`)
+- **Backend tools**: Auto-prefixed with server name (e.g., `filesystem_read_file`, `github_create_issue`, `postgres_query`)
+- **Collision prevention**: Backend prefixes ensure no conflicts with local tools
 
 **Testing Status**:
 - ✅ Proxy initialization (dry-run validation)

@@ -7,19 +7,16 @@
 repos:
     # Ruff - Fast Python linter and formatter
     - repo: https://github.com/astral-sh/ruff-pre-commit
-      rev: v0.8.4
+      rev: v0.14.1
       hooks:
           # Run the linter
           - id: ruff
-            args: [--fix]
-            stages: [pre-commit]
-          # Run the formatter
-          - id: ruff-format
+            args: [--fix, --unsafe-fixes]
             stages: [pre-commit]
 
     # Mypy - Static type checker
     - repo: https://github.com/pre-commit/mirrors-mypy
-      rev: v1.13.0
+      rev: v1.18.2
       hooks:
           - id: mypy
             args: [--config-file=pyproject.toml]
@@ -38,6 +35,7 @@ repos:
                 - tiktoken>=0.5.0
                 - blake3>=1.0.7
                 - pybreaker>=1.0.0
+                - sqlalchemy>=2.0.0
                 - numpy
             stages: [pre-commit]
             exclude: ^(tests/|benchmarks/|src/semantic_cache/|src/context_optimization/seraph_compression\.py)
