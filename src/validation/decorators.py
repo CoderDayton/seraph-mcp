@@ -35,8 +35,8 @@ def validate_input(schema: type[BaseModel]) -> Callable[[Callable[..., Any]], Ca
         Decorated function with automatic validation
 
     Example:
-        >>> @validate_input(OptimizeContextInput)
-        ... async def optimize_context(content: str, method: str = "auto", **kwargs):
+        >>> @validate_input(CountTokensInput)
+        ... async def count_tokens(content: str, model: str = "gpt-4", **kwargs):
         ...     # Function receives validated inputs
         ...     pass
 

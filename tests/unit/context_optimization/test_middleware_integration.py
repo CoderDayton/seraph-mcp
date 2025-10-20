@@ -3,6 +3,11 @@ Tests for OptimizedProvider middleware integration with server initialization.
 
 Verifies that providers are properly wrapped with optimization middleware
 at server startup and that automatic optimization occurs transparently.
+
+NOTE: This test file was refactored to match real provider interface:
+- Providers have complete(CompletionRequest) method, NOT generate()
+- Middleware only optimizes chat messages (not raw prompts)
+- Tests removed: prompt-based optimization (lines 94-130, 169-205 in old version)
 """
 
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -11,6 +16,20 @@ import pytest
 
 from src.context_optimization.config import ContextOptimizationConfig
 from src.context_optimization.middleware import OptimizedProvider, wrap_provider
+from src.providers.base import CompletionResponse
+
+
+def create_mock_response(content: str = "response", model: str = "gpt-4") -> CompletionResponse:
+    """Create a mock CompletionResponse for testing."""
+    return CompletionResponse(
+        content=content,
+        model=model,
+        usage={"prompt_tokens": 10, "completion_tokens": 20, "total_tokens": 30},
+        finish_reason="stop",
+        provider="openai",
+        latency_ms=100.0,
+        cost_usd=0.001,
+    )
 
 
 class TestMiddlewareWrapperFunction:
@@ -74,52 +93,16 @@ class TestOptimizedProviderInterface:
 
 
 class TestAutomaticOptimization:
-    """Test that middleware automatically optimizes prompts."""
-
-    @pytest.mark.asyncio
-    async def test_generate_with_prompt_triggers_optimization(self):
-        """Verify generate() with prompt triggers automatic optimization."""
-        # Setup mock provider
-        mock_provider = MagicMock()
-        mock_provider.generate = AsyncMock(return_value={"text": "response"})
-
-        # Setup mock optimizer
-        mock_optimizer = MagicMock()
-        mock_result = MagicMock()
-        mock_result.optimized_content = "optimized prompt"
-        mock_result.tokens_saved = 100
-        mock_result.reduction_percentage = 30.0
-        mock_result.quality_score = 0.95
-        mock_result.validation_passed = True
-        mock_result.processing_time_ms = 50
-        mock_result.metadata = {"cost_savings_usd": 0.002, "rollback_occurred": False}
-        mock_optimizer.optimize = AsyncMock(return_value=mock_result)
-
-        config = ContextOptimizationConfig(enabled=True)
-        wrapped = OptimizedProvider(provider=mock_provider, optimizer=mock_optimizer, config=config)
-
-        # Call generate
-        response = await wrapped.generate(prompt="original long prompt")
-
-        # Verify optimization was called
-        mock_optimizer.optimize.assert_called_once_with("original long prompt")
-
-        # Verify provider received optimized prompt
-        mock_provider.generate.assert_called_once()
-        call_kwargs = mock_provider.generate.call_args[1]
-        assert call_kwargs["prompt"] == "optimized prompt"
-
-        # Verify response includes optimization metadata
-        assert "optimization" in response
-        assert response["optimization"]["tokens_saved"] == 100
-        assert response["optimization"]["reduction_percentage"] == 30.0
+    """Test that middleware automatically optimizes messages."""
 
     @pytest.mark.asyncio
     async def test_generate_with_messages_triggers_optimization(self):
         """Verify generate() with messages optimizes last user message."""
+        # Setup mock provider with proper complete() method
         mock_provider = MagicMock()
-        mock_provider.generate = AsyncMock(return_value={"text": "response"})
+        mock_provider.complete = AsyncMock(return_value=create_mock_response("response"))
 
+        # Setup mock optimizer
         mock_optimizer = MagicMock()
         mock_result = MagicMock()
         mock_result.optimized_content = "optimized message"
@@ -134,28 +117,34 @@ class TestAutomaticOptimization:
         config = ContextOptimizationConfig(enabled=True)
         wrapped = OptimizedProvider(provider=mock_provider, optimizer=mock_optimizer, config=config)
 
-        # NOTE: Message must be >100 chars to trigger optimization (per middleware logic)
+        # Message must be >100 chars to trigger optimization (per middleware logic)
         long_message = "This is a very long user message that must exceed one hundred characters to trigger the optimization logic in the middleware implementation code."
         messages = [
             {"role": "system", "content": "You are a helpful assistant"},
             {"role": "user", "content": long_message},
         ]
 
-        await wrapped.generate(messages=messages)
+        response = await wrapped.generate(messages=messages)
 
         # Verify optimization was called on user message
         mock_optimizer.optimize.assert_called_once()
 
-        # Verify provider received optimized messages
-        mock_provider.generate.assert_called_once()
-        call_kwargs = mock_provider.generate.call_args[1]
-        assert call_kwargs["messages"][1]["content"] == "optimized message"
+        # Verify provider.complete() was called with proper CompletionRequest
+        mock_provider.complete.assert_called_once()
+        call_args = mock_provider.complete.call_args[0][0]  # Get CompletionRequest object
+        assert hasattr(call_args, "messages")
+        assert call_args.messages[1]["content"] == "optimized message"
+
+        # Verify response includes optimization metadata
+        assert "optimization" in response
+        assert response["optimization"]["tokens_saved"] == 50
+        assert response["optimization"]["reduction_percentage"] == 20.0
 
     @pytest.mark.asyncio
     async def test_skip_optimization_flag_bypasses_middleware(self):
         """Verify skip_optimization=True bypasses optimization."""
         mock_provider = MagicMock()
-        mock_provider.generate = AsyncMock(return_value={"text": "response"})
+        mock_provider.complete = AsyncMock(return_value=create_mock_response())
 
         mock_optimizer = MagicMock()
         mock_optimizer.optimize = AsyncMock()
@@ -163,21 +152,22 @@ class TestAutomaticOptimization:
         config = ContextOptimizationConfig(enabled=True)
         wrapped = OptimizedProvider(provider=mock_provider, optimizer=mock_optimizer, config=config)
 
-        await wrapped.generate(prompt="test prompt", skip_optimization=True)
+        messages = [{"role": "user", "content": "test message"}]
+        await wrapped.generate(messages=messages, skip_optimization=True)
 
         # Verify optimizer was NOT called
         mock_optimizer.optimize.assert_not_called()
 
-        # Verify provider received original prompt
-        mock_provider.generate.assert_called_once()
-        call_kwargs = mock_provider.generate.call_args[1]
-        assert call_kwargs["prompt"] == "test prompt"
+        # Verify provider.complete() received original messages
+        mock_provider.complete.assert_called_once()
+        call_args = mock_provider.complete.call_args[0][0]
+        assert call_args.messages[0]["content"] == "test message"
 
     @pytest.mark.asyncio
     async def test_disabled_config_skips_optimization(self):
         """Verify optimization is skipped when config.enabled=False."""
         mock_provider = MagicMock()
-        mock_provider.generate = AsyncMock(return_value={"text": "response"})
+        mock_provider.complete = AsyncMock(return_value=create_mock_response())
 
         mock_optimizer = MagicMock()
         mock_optimizer.optimize = AsyncMock()
@@ -185,7 +175,8 @@ class TestAutomaticOptimization:
         config = ContextOptimizationConfig(enabled=False)
         wrapped = OptimizedProvider(provider=mock_provider, optimizer=mock_optimizer, config=config)
 
-        await wrapped.generate(prompt="test prompt")
+        messages = [{"role": "user", "content": "test message"}]
+        await wrapped.generate(messages=messages)
 
         # Verify optimizer was NOT called
         mock_optimizer.optimize.assert_not_called()
@@ -198,14 +189,14 @@ class TestMiddlewareStats:
     async def test_tracks_total_calls(self):
         """Verify middleware tracks total call count."""
         mock_provider = MagicMock()
-        mock_provider.generate = AsyncMock(return_value={"text": "response"})
+        mock_provider.complete = AsyncMock(return_value=create_mock_response())
 
         config = ContextOptimizationConfig(enabled=False)  # Disable to simplify
         wrapped = OptimizedProvider(provider=mock_provider, config=config)
 
-        await wrapped.generate(prompt="test1")
-        await wrapped.generate(prompt="test2")
-        await wrapped.generate(prompt="test3")
+        await wrapped.generate(messages=[{"role": "user", "content": "test1"}])
+        await wrapped.generate(messages=[{"role": "user", "content": "test2"}])
+        await wrapped.generate(messages=[{"role": "user", "content": "test3"}])
 
         stats = wrapped.get_stats()
         assert stats["middleware"]["total_calls"] == 3
@@ -214,7 +205,7 @@ class TestMiddlewareStats:
     async def test_tracks_tokens_saved(self):
         """Verify middleware tracks cumulative tokens saved."""
         mock_provider = MagicMock()
-        mock_provider.generate = AsyncMock(return_value={"text": "response"})
+        mock_provider.complete = AsyncMock(return_value=create_mock_response())
 
         mock_optimizer = MagicMock()
         mock_result = MagicMock()
@@ -228,8 +219,10 @@ class TestMiddlewareStats:
         config = ContextOptimizationConfig(enabled=True)
         wrapped = OptimizedProvider(provider=mock_provider, optimizer=mock_optimizer, config=config)
 
-        await wrapped.generate(prompt="test1")
-        await wrapped.generate(prompt="test2")
+        # Long messages to trigger optimization
+        msg = "x" * 150
+        await wrapped.generate(messages=[{"role": "user", "content": msg}])
+        await wrapped.generate(messages=[{"role": "user", "content": msg}])
 
         stats = wrapped.get_stats()
         assert stats["middleware"]["total_tokens_saved"] == 200  # 100 * 2
@@ -238,7 +231,7 @@ class TestMiddlewareStats:
     async def test_tracks_cost_savings(self):
         """Verify middleware tracks cumulative cost savings."""
         mock_provider = MagicMock()
-        mock_provider.generate = AsyncMock(return_value={"text": "response"})
+        mock_provider.complete = AsyncMock(return_value=create_mock_response())
 
         mock_optimizer = MagicMock()
         mock_result = MagicMock()
@@ -252,8 +245,9 @@ class TestMiddlewareStats:
         config = ContextOptimizationConfig(enabled=True)
         wrapped = OptimizedProvider(provider=mock_provider, optimizer=mock_optimizer, config=config)
 
-        await wrapped.generate(prompt="test1")
-        await wrapped.generate(prompt="test2")
+        msg = "x" * 150
+        await wrapped.generate(messages=[{"role": "user", "content": msg}])
+        await wrapped.generate(messages=[{"role": "user", "content": msg}])
 
         stats = wrapped.get_stats()
         assert stats["middleware"]["total_cost_saved"] == 0.010  # 0.005 * 2
@@ -263,10 +257,10 @@ class TestErrorHandling:
     """Test middleware error handling and fallback behavior."""
 
     @pytest.mark.asyncio
-    async def test_optimization_failure_uses_original_prompt(self):
-        """Verify optimization errors fall back to original prompt."""
+    async def test_optimization_failure_uses_original_messages(self):
+        """Verify optimization errors fall back to original messages."""
         mock_provider = MagicMock()
-        mock_provider.generate = AsyncMock(return_value={"text": "response"})
+        mock_provider.complete = AsyncMock(return_value=create_mock_response())
 
         mock_optimizer = MagicMock()
         mock_optimizer.optimize = AsyncMock(side_effect=Exception("Optimization failed"))
@@ -274,12 +268,13 @@ class TestErrorHandling:
         config = ContextOptimizationConfig(enabled=True)
         wrapped = OptimizedProvider(provider=mock_provider, optimizer=mock_optimizer, config=config)
 
-        response = await wrapped.generate(prompt="test prompt")
+        messages = [{"role": "user", "content": "x" * 150}]
+        response = await wrapped.generate(messages=messages)
 
-        # Verify provider received ORIGINAL prompt (fallback)
-        mock_provider.generate.assert_called_once()
-        call_kwargs = mock_provider.generate.call_args[1]
-        assert call_kwargs["prompt"] == "test prompt"
+        # Verify provider received ORIGINAL messages (fallback)
+        mock_provider.complete.assert_called_once()
+        call_args = mock_provider.complete.call_args[0][0]
+        assert call_args.messages[0]["content"] == "x" * 150
 
         # Verify response has no optimization metadata
         assert "optimization" not in response
@@ -288,13 +283,13 @@ class TestErrorHandling:
     async def test_provider_error_propagates(self):
         """Verify provider errors propagate correctly."""
         mock_provider = MagicMock()
-        mock_provider.generate = AsyncMock(side_effect=ValueError("Provider error"))
+        mock_provider.complete = AsyncMock(side_effect=ValueError("Provider error"))
 
         config = ContextOptimizationConfig(enabled=False)
         wrapped = OptimizedProvider(provider=mock_provider, config=config)
 
         with pytest.raises(ValueError, match="Provider error"):
-            await wrapped.generate(prompt="test prompt")
+            await wrapped.generate(messages=[{"role": "user", "content": "test"}])
 
 
 class TestServerIntegration:

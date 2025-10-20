@@ -15,42 +15,6 @@ from typing import Any
 from pydantic import BaseModel, Field, field_validator
 
 
-class OptimizeContextInput(BaseModel):
-    """Input validation for optimize_context tool."""
-
-    content: str = Field(
-        ...,
-        min_length=1,
-        max_length=1_000_000,
-        description="Content to optimize (1-1M characters)",
-    )
-    method: str = Field(
-        default="auto",
-        pattern="^(auto|ai|seraph|hybrid)$",
-        description="Compression method: auto, ai, seraph, or hybrid",
-    )
-    quality_threshold: float | None = Field(
-        default=None,
-        ge=0.0,
-        le=1.0,
-        description="Minimum quality score (0-1), overrides config default",
-    )
-    max_overhead_ms: float | None = Field(
-        default=None,
-        ge=0.0,
-        le=10000.0,
-        description="Maximum processing time in milliseconds (0-10000ms)",
-    )
-
-    @field_validator("content")
-    @classmethod
-    def validate_content_not_empty(cls, v: str) -> str:
-        """Ensure content is not just whitespace."""
-        if not v.strip():
-            raise ValueError("Content cannot be empty or only whitespace")
-        return v
-
-
 class GetOptimizationStatsInput(BaseModel):
     """Input validation for get_optimization_stats tool (no parameters)."""
 

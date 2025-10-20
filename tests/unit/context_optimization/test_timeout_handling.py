@@ -18,7 +18,7 @@ import pytest
 
 from src.context_optimization.config import ContextOptimizationConfig
 from src.context_optimization.optimizer import ContextOptimizer
-from src.providers.base import BaseProvider
+from src.providers.base import BaseProvider, CompletionResponse
 
 
 @pytest.fixture
@@ -107,7 +107,7 @@ class TestTimeoutPropagation:
             await asyncio.sleep(10)
             return "never"
 
-        mock_provider.generate = AsyncMock(side_effect=slow_call)
+        mock_provider.complete = AsyncMock(side_effect=slow_call)
         mock_provider.count_tokens = MagicMock(return_value=50)
 
         # Create optimizer WITH the mock provider
@@ -213,7 +213,7 @@ class TestRealWorldTimeoutScenario:
             await asyncio.sleep(100)  # Definitely will timeout
             return "unreachable"
 
-        slow_provider.generate = AsyncMock(side_effect=always_timeout)
+        slow_provider.complete = AsyncMock(side_effect=always_timeout)
         slow_provider.count_tokens = MagicMock(return_value=len(sample_text.split()))
 
         # Create optimizer with timeout-prone provider
@@ -241,9 +241,16 @@ class TestRealWorldTimeoutScenario:
         """
         # Fast provider that completes quickly
         fast_provider = MagicMock(spec=BaseProvider)
-        fast_provider.generate = AsyncMock(
-            return_value="Compressed: ML systems learn from data, DL uses neural nets, NLP understands language."
+        mock_response = CompletionResponse(
+            content="Compressed: ML systems learn from data, DL uses neural nets, NLP understands language.",
+            model="test-model",
+            usage={"prompt_tokens": 50, "completion_tokens": 20, "total_tokens": 70},
+            finish_reason="stop",
+            provider="test",
+            latency_ms=100.0,
+            cost_usd=0.001,
         )
+        fast_provider.complete = AsyncMock(return_value=mock_response)
         fast_provider.count_tokens = MagicMock(side_effect=lambda t: len(t.split()))
 
         optimizer = ContextOptimizer(config=optimizer_config, provider=fast_provider)

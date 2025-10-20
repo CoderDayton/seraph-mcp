@@ -1,26 +1,25 @@
 """
 Seraph MCP — Observability Monitoring
 
-Single observability adapter for metrics, traces, and logs per SDD.md.
-This is the ONLY place for instrumentation in the core runtime.
-
-Following SDD.md mandatory rules:
-- Single adapter rule: This is the only observability module
-- All modules must use this adapter, not create their own
-- Structured JSON logging with trace IDs
-- Prometheus-compatible metrics
+Simple metrics collection with SQLite persistence.
+All metrics stored in local database for easy querying and maintenance.
 """
 
+import asyncio
 import contextvars
 import json
 import logging
 import time
 from collections.abc import Generator
 from contextlib import contextmanager
-from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
+
+from sqlalchemy import delete, select
+
+from .database import MetricsDatabase
+from .db_models import MetricRecord
 
 # Trace ID context variable for distributed tracing
 _trace_id_ctx: contextvars.ContextVar[str | None] = contextvars.ContextVar("trace_id", default=None)
@@ -29,31 +28,21 @@ _trace_id_ctx: contextvars.ContextVar[str | None] = contextvars.ContextVar("trac
 _request_id_ctx: contextvars.ContextVar[str | None] = contextvars.ContextVar("request_id", default=None)
 
 
-@dataclass
-class MetricValue:
-    """Container for metric data."""
-
-    name: str
-    value: float
-    tags: dict[str, str] = field(default_factory=dict)
-    timestamp: float = field(default_factory=time.time)
-
-
 class ObservabilityAdapter:
     """
-    Single observability adapter for the entire runtime.
+    Simple observability adapter with SQLite persistence.
 
     Provides:
-    - Metrics (counters, gauges, histograms)
-    - Distributed tracing
-    - Structured logging with trace context
+    - Metrics (counters, gauges, histograms) → SQLite
+    - Distributed tracing (trace IDs)
+    - Structured JSON logging
     """
 
     def __init__(
         self,
         enable_metrics: bool = True,
         enable_tracing: bool = True,
-        backend: str = "simple",
+        metrics_db_path: str = "metrics.db",
     ):
         """
         Initialize observability adapter.
@@ -61,14 +50,14 @@ class ObservabilityAdapter:
         Args:
             enable_metrics: Enable metrics collection
             enable_tracing: Enable distributed tracing
-            backend: Backend type (simple, prometheus, datadog)
+            metrics_db_path: Path to SQLite database
         """
         self.enable_metrics = enable_metrics
         self.enable_tracing = enable_tracing
-        self.backend = backend
 
-        # In-memory metrics store (for simple backend)
-        self._metrics: dict[str, list[MetricValue]] = {}
+        # SQLite database for metrics
+        self._db = MetricsDatabase(db_path=metrics_db_path)
+        self._db_initialized = False
 
         # Logger with JSON formatting
         self.logger = self._setup_logger()
@@ -88,6 +77,12 @@ class ObservabilityAdapter:
 
         return logger
 
+    async def _ensure_db_initialized(self) -> None:
+        """Ensure database is initialized (idempotent)."""
+        if not self._db_initialized:
+            await self._db.initialize()
+            self._db_initialized = True
+
     def increment(
         self,
         metric: str,
@@ -98,7 +93,7 @@ class ObservabilityAdapter:
         Increment a counter metric.
 
         Args:
-            metric: Metric name (e.g., "src.cache.hits")
+            metric: Metric name (e.g., "cache.hits")
             value: Value to increment by
             tags: Optional metric tags/labels
         """
@@ -108,14 +103,8 @@ class ObservabilityAdapter:
         tags = tags or {}
         metric_name = f"src.{metric}"
 
-        if self.backend == "simple":
-            self._store_metric(metric_name, value, tags)
-        elif self.backend == "prometheus":
-            # Prometheus integration would go here (plugin)
-            pass
-        elif self.backend == "datadog":
-            # Datadog integration would go here (plugin)
-            pass
+        # Store to SQLite (fire and forget)
+        asyncio.create_task(self._store_metric(metric_name, value, tags))
 
     def gauge(
         self,
@@ -137,8 +126,8 @@ class ObservabilityAdapter:
         tags = tags or {}
         metric_name = f"src.{metric}"
 
-        if self.backend == "simple":
-            self._store_metric(metric_name, value, tags)
+        # Store to SQLite (fire and forget)
+        asyncio.create_task(self._store_metric(metric_name, value, tags))
 
     def histogram(
         self,
@@ -160,8 +149,8 @@ class ObservabilityAdapter:
         tags = tags or {}
         metric_name = f"src.{metric}"
 
-        if self.backend == "simple":
-            self._store_metric(metric_name, value, tags)
+        # Store to SQLite (fire and forget)
+        asyncio.create_task(self._store_metric(metric_name, value, tags))
 
     def event(self, name: str, payload: dict[str, Any]) -> None:
         """
@@ -191,7 +180,7 @@ class ObservabilityAdapter:
 
         Example:
             with observability.trace("cache.get"):
-                value = await cache.get(key)
+                value = cache.get(key)
         """
         if not self.enable_tracing:
             yield
@@ -265,34 +254,70 @@ class ObservabilityAdapter:
         """Set request ID in context."""
         _request_id_ctx.set(request_id)
 
-    def get_metrics(self) -> dict[str, list[MetricValue]]:
+    async def get_metrics(
+        self,
+        metric_name: str | None = None,
+        limit: int = 1000,
+    ) -> list[dict[str, Any]]:
         """
-        Get all collected metrics (simple backend only).
+        Get metrics from database.
+
+        Args:
+            metric_name: Optional filter by metric name
+            limit: Maximum number of records to return
 
         Returns:
-            Dictionary of metric name to list of values
+            List of metric records as dictionaries
         """
-        return self._metrics.copy()
+        await self._ensure_db_initialized()
 
-    def clear_metrics(self) -> None:
-        """Clear all collected metrics (testing/reset)."""
-        self._metrics.clear()
+        async with self._db.get_session() as session:
+            query = select(MetricRecord).order_by(MetricRecord.timestamp.desc()).limit(limit)
 
-    def _store_metric(
+            if metric_name:
+                query = query.where(MetricRecord.name == metric_name)
+
+            result = await session.execute(query)
+            records = result.scalars().all()
+
+            return [record.to_dict() for record in records]
+
+    async def clear_metrics(self) -> None:
+        """Clear all metrics from database (testing/reset)."""
+        await self._ensure_db_initialized()
+
+        async with self._db.get_session() as session:
+            await session.execute(delete(MetricRecord))
+            await session.commit()
+
+    async def close(self) -> None:
+        """Close database connections gracefully."""
+        await self._db.close()
+
+    async def _store_metric(
         self,
         name: str,
         value: float,
         tags: dict[str, str],
     ) -> None:
-        """Store metric in memory (simple backend)."""
-        if name not in self._metrics:
-            self._metrics[name] = []
+        """Store metric to SQLite database."""
+        try:
+            await self._ensure_db_initialized()
 
-        self._metrics[name].append(MetricValue(name=name, value=value, tags=tags))
+            record = MetricRecord.from_metric_value(
+                name=name,
+                value=value,
+                tags=tags,
+                timestamp=time.time(),
+            )
 
-        # Keep only last 1000 values per metric to prevent memory bloat
-        if len(self._metrics[name]) > 1000:
-            self._metrics[name] = self._metrics[name][-1000:]
+            async with self._db.get_session() as session:
+                session.add(record)
+                await session.commit()
+
+        except Exception as e:
+            # Log error but don't fail the main flow
+            self.logger.error(f"Failed to store metric {name}: {e}")
 
 
 class JSONFormatter(logging.Formatter):
@@ -320,9 +345,37 @@ class JSONFormatter(logging.Formatter):
         if request_id:
             log_data["request_id"] = request_id
 
-        # Add any extra fields
-        if hasattr(record, "extra") and isinstance(getattr(record, "extra", None), dict):
-            log_data.update(record.extra)
+        # Add any extra fields from record.__dict__
+        for key, value in record.__dict__.items():
+            if (
+                key not in log_data
+                and not key.startswith("_")
+                and key
+                not in (
+                    "args",
+                    "msg",
+                    "levelname",
+                    "levelno",
+                    "pathname",
+                    "filename",
+                    "module",
+                    "exc_info",
+                    "exc_text",
+                    "stack_info",
+                    "lineno",
+                    "funcName",
+                    "created",
+                    "msecs",
+                    "relativeCreated",
+                    "thread",
+                    "threadName",
+                    "processName",
+                    "process",
+                    "name",
+                    "message",
+                )
+            ):
+                log_data[key] = value
 
         # Add exception info if present
         if record.exc_info:
@@ -331,7 +384,7 @@ class JSONFormatter(logging.Formatter):
         return json.dumps(log_data)
 
 
-# Global observability adapter instance (singleton per SDD.md)
+# Global observability adapter instance (singleton)
 _observability_adapter: ObservabilityAdapter | None = None
 
 
@@ -339,7 +392,7 @@ def get_observability() -> ObservabilityAdapter:
     """
     Get the global observability adapter instance.
 
-    This is the canonical way to access observability per SDD.md.
+    This is the canonical way to access observability.
     All modules MUST use this function, not create their own adapters.
 
     Returns:
@@ -348,14 +401,14 @@ def get_observability() -> ObservabilityAdapter:
     global _observability_adapter
 
     if _observability_adapter is None:
-        # Auto-initialize with defaults
+        # Auto-initialize with defaults from config
         from ..config import get_config
 
         config = get_config().observability
         _observability_adapter = ObservabilityAdapter(
             enable_metrics=config.enable_metrics,
             enable_tracing=config.enable_tracing,
-            backend=config.backend,
+            metrics_db_path=config.metrics_db_path,
         )
 
     return _observability_adapter
@@ -364,7 +417,7 @@ def get_observability() -> ObservabilityAdapter:
 def initialize_observability(
     enable_metrics: bool = True,
     enable_tracing: bool = True,
-    backend: str = "simple",
+    metrics_db_path: str = "metrics.db",
 ) -> ObservabilityAdapter:
     """
     Initialize the global observability adapter.
@@ -372,7 +425,7 @@ def initialize_observability(
     Args:
         enable_metrics: Enable metrics collection
         enable_tracing: Enable distributed tracing
-        backend: Backend type
+        metrics_db_path: Path to SQLite database
 
     Returns:
         Initialized ObservabilityAdapter instance
@@ -382,7 +435,7 @@ def initialize_observability(
     _observability_adapter = ObservabilityAdapter(
         enable_metrics=enable_metrics,
         enable_tracing=enable_tracing,
-        backend=backend,
+        metrics_db_path=metrics_db_path,
     )
 
     return _observability_adapter

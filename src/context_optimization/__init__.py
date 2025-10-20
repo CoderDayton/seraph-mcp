@@ -12,6 +12,7 @@ Target: <100ms, >=90% quality, 20-40% token reduction
 """
 
 from .config import ContextOptimizationConfig, load_config
+from .mcp_middleware import CompressionMiddleware
 from .middleware import OptimizedProvider, wrap_provider
 from .models import FeedbackRecord, OptimizationResult
 from .optimizer import ContextOptimizer, optimize_content
@@ -26,6 +27,7 @@ from .seraph_compression import (
 __all__ = [
     "ContextOptimizationConfig",
     "load_config",
+    "CompressionMiddleware",
     "OptimizationResult",
     "FeedbackRecord",
     "ContextOptimizer",

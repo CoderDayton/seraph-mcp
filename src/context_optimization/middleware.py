@@ -17,14 +17,16 @@ Usage:
     )
 
     # Use as normal - optimization happens automatically
-    response = await optimized_provider.generate(prompt="Long prompt...")
+    response = await optimized_provider.generate(messages=[{"role": "user", "content": "Long prompt..."}])
 """
 
 import logging
 from typing import Any
 
+from ..observability import get_observability
 from ..security import ContentValidator, InjectionDetector, SecurityConfig
 from .config import ContextOptimizationConfig, load_config
+from .models import OptimizationResult
 from .optimizer import ContextOptimizer
 
 logger = logging.getLogger(__name__)
@@ -92,19 +94,17 @@ class OptimizedProvider:
 
     async def generate(
         self,
-        prompt: str | None = None,
-        messages: list[dict[str, str]] | None = None,
+        messages: list[dict[str, str]],
         skip_optimization: bool = False,
         **kwargs: Any,
     ) -> dict[str, Any]:
         """
-        Generate completion with automatic prompt optimization.
+        Generate completion with automatic message optimization.
 
         Args:
-            prompt: Single prompt string (for completion-style APIs)
-            messages: Chat messages (for chat-style APIs)
+            messages: Chat messages (standard format with role/content)
             skip_optimization: Set to True to bypass optimization
-            **kwargs: Additional arguments passed to base provider
+            **kwargs: Additional arguments passed to base provider (model, temperature, etc.)
 
         Returns:
             Provider response with optimization metadata added
@@ -113,28 +113,15 @@ class OptimizedProvider:
 
         # Skip optimization if disabled or explicitly requested
         if not self.config.enabled or skip_optimization:
-            return await self._call_provider(prompt=prompt, messages=messages, **kwargs)
+            return await self._call_provider(messages=messages, **kwargs)
 
-        # Optimize prompt or messages
-        if prompt:
-            optimized_prompt, opt_result = await self._optimize_prompt(prompt)
-            return await self._call_provider(
-                prompt=optimized_prompt,
-                messages=None,
-                optimization_result=opt_result,
-                **kwargs,
-            )
-        elif messages:
-            optimized_messages, opt_result = await self._optimize_messages(messages)
-            return await self._call_provider(
-                prompt=None,
-                messages=optimized_messages,
-                optimization_result=opt_result,
-                **kwargs,
-            )
-        else:
-            # No prompt or messages - pass through
-            return await self._call_provider(prompt=prompt, messages=messages, **kwargs)
+        # Optimize messages (typically last user message)
+        optimized_messages, opt_result = await self._optimize_messages(messages)
+        return await self._call_provider(
+            messages=optimized_messages,
+            optimization_result=opt_result,
+            **kwargs,
+        )
 
     async def chat(
         self, messages: list[dict[str, str]], skip_optimization: bool = False, **kwargs: Any
@@ -152,80 +139,9 @@ class OptimizedProvider:
         """
         return await self.generate(messages=messages, skip_optimization=skip_optimization, **kwargs)
 
-    async def _optimize_prompt(self, prompt: str) -> tuple[str, Any | None]:
-        """
-        Optimize a single prompt string with security checks.
-
-        Security workflow:
-        1. Detect injection → If detected, skip optimization (use original)
-        2. Optimize content → Compress using configured method
-        3. Validate output → If failed, rollback to original
-
-        Returns:
-            Tuple of (optimized_prompt, optimization_result)
-        """
-        try:
-            # Security: Pre-optimization injection detection
-            if self.security_config.enabled and self.security_config.injection_detection_enabled:
-                detection_result = self.injection_detector.detect(prompt)
-
-                if detection_result.detected:
-                    self.middleware_stats["injection_detections"] += 1
-
-                    if self.security_config.log_security_events:
-                        logger.warning(
-                            f"Injection detected (risk: {detection_result.risk_score:.2f}), "
-                            f"categories: {set(m['category'] for m in detection_result.matched_patterns)}, "
-                            f"using original content"
-                        )
-
-                    # Fail-safe: Return original content without optimization
-                    if self.security_config.fail_safe_on_detection:
-                        return prompt, None
-
-            # Optimize content
-            result = await self.optimizer.optimize(prompt)
-
-            # Security: Post-optimization content validation
-            if self.security_config.enabled:
-                validation_result = self.content_validator.validate_compressed_content(
-                    original=prompt,
-                    compressed=result.optimized_content,
-                    quality_score=result.quality_score,
-                )
-
-                if not validation_result.passed:
-                    self.middleware_stats["validation_failures"] += 1
-
-                    if self.security_config.log_security_events:
-                        logger.warning(
-                            f"Validation failed: {', '.join(validation_result.reasons)}, " f"rolling back to original"
-                        )
-
-                    # Fail-safe: Return original content
-                    return prompt, None
-
-            # Update middleware stats
-            rollback_occurred = result.metadata.get("rollback_occurred", False)
-            if result.validation_passed and not rollback_occurred:
-                self.middleware_stats["optimized_calls"] += 1
-                self.middleware_stats["total_tokens_saved"] += result.tokens_saved
-                cost_savings = result.metadata.get("cost_savings_usd", 0.0)
-                self.middleware_stats["total_cost_saved"] += cost_savings
-
-                logger.info(
-                    f"Optimized prompt: {result.tokens_saved} tokens saved "
-                    f"({result.reduction_percentage:.1f}%), "
-                    f"quality: {result.quality_score:.2f}"
-                )
-
-            return result.optimized_content, result
-
-        except Exception as e:
-            logger.error(f"Optimization error, using original prompt: {e}")
-            return prompt, None
-
-    async def _optimize_messages(self, messages: list[dict[str, str]]) -> tuple[list[dict[str, str]], Any | None]:
+    async def _optimize_messages(
+        self, messages: list[dict[str, str]]
+    ) -> tuple[list[dict[str, str]], OptimizationResult | None]:
         """
         Optimize chat messages (typically the last user message) with security checks.
 
@@ -266,6 +182,14 @@ class OptimizedProvider:
                 if detection_result.detected:
                     self.middleware_stats["injection_detections"] += 1
 
+                    # Track injection detection in observability
+                    obs = get_observability()
+                    obs.increment(
+                        "optimization.injection_detected",
+                        value=1.0,
+                        tags={"risk_score": f"{detection_result.risk_score:.1f}"},
+                    )
+
                     if self.security_config.log_security_events:
                         logger.warning(
                             f"Injection detected in message (risk: {detection_result.risk_score:.2f}), "
@@ -291,6 +215,14 @@ class OptimizedProvider:
                 if not validation_result.passed:
                     self.middleware_stats["validation_failures"] += 1
 
+                    # Track validation failure in observability
+                    obs = get_observability()
+                    obs.increment(
+                        "optimization.validation_failed",
+                        value=1.0,
+                        tags={"reasons": ",".join(validation_result.reasons[:3])},  # Limit tag size
+                    )
+
                     if self.security_config.log_security_events:
                         logger.warning(
                             f"Message validation failed: {', '.join(validation_result.reasons)}, "
@@ -314,10 +246,46 @@ class OptimizedProvider:
                 cost_savings = result.metadata.get("cost_savings_usd", 0.0)
                 self.middleware_stats["total_cost_saved"] += cost_savings
 
+                # Track compression metrics in observability
+                obs = get_observability()
+                obs.histogram(
+                    "optimization.compression_ratio",
+                    value=result.compression_ratio,
+                    tags={"method": result.method},
+                )
+                obs.histogram(
+                    "optimization.processing_time_ms",
+                    value=result.processing_time_ms,
+                    tags={"method": result.method},
+                )
+                obs.gauge(
+                    "optimization.quality_score",
+                    value=result.quality_score,
+                    tags={"method": result.method},
+                )
+                obs.increment(
+                    "optimization.tokens_saved",
+                    value=float(result.tokens_saved),
+                    tags={"method": result.method},
+                )
+                obs.increment(
+                    "optimization.method_selected",
+                    value=1.0,
+                    tags={"method": result.method},
+                )
+
                 logger.info(
                     f"Optimized message: {result.tokens_saved} tokens saved "
                     f"({result.reduction_percentage:.1f}%), "
                     f"quality: {result.quality_score:.2f}"
+                )
+            elif rollback_occurred:
+                # Track rollback events
+                obs = get_observability()
+                obs.increment(
+                    "optimization.rollback_occurred",
+                    value=1.0,
+                    tags={"method": result.method},
                 )
 
             return optimized_messages, result
@@ -330,7 +298,7 @@ class OptimizedProvider:
         self,
         prompt: str | None = None,
         messages: list[dict[str, str]] | None = None,
-        optimization_result: Any | None = None,
+        optimization_result: OptimizationResult | None = None,
         **kwargs: Any,
     ) -> dict[str, Any]:
         """
@@ -340,29 +308,61 @@ class OptimizedProvider:
             Provider response with optimization metadata added
         """
         try:
-            # Call provider based on its interface
-            if hasattr(self.provider, "generate"):
-                response = await self.provider.generate(prompt=prompt, messages=messages, **kwargs)
-            elif hasattr(self.provider, "chat") and messages:
-                response = await self.provider.chat(messages=messages, **kwargs)
-            elif hasattr(self.provider, "complete") and prompt:
-                response = await self.provider.complete(prompt=prompt, **kwargs)
+            # Import CompletionRequest here to avoid circular imports
+            from src.providers.base import CompletionRequest
+
+            # Construct proper CompletionRequest object
+            # If messages provided, use them directly; otherwise convert prompt to message
+            if messages:
+                request_messages = messages
+            elif prompt:
+                request_messages = [{"role": "user", "content": prompt}]
             else:
-                raise ValueError("Provider does not have a supported interface")
+                raise ValueError("Either prompt or messages must be provided")
+
+            # Extract model from kwargs or use default
+            model = kwargs.pop("model", "gpt-4")
+            temperature = kwargs.pop("temperature", 0.7)
+            max_tokens = kwargs.pop("max_tokens", None)
+            stream = kwargs.pop("stream", False)
+            timeout = kwargs.pop("timeout", None)
+
+            # Create CompletionRequest
+            request = CompletionRequest(
+                model=model,
+                messages=request_messages,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                stream=stream,
+                timeout=timeout,
+                **kwargs,  # Pass through any additional provider-specific params
+            )
+
+            # Call provider with proper interface
+            response = await self.provider.complete(request)
+
+            # Convert CompletionResponse to dict for backward compatibility
+            response_dict = {
+                "content": response.content,
+                "model": response.model,
+                "usage": response.usage,
+                "finish_reason": response.finish_reason,
+                "provider": response.provider,
+                "latency_ms": response.latency_ms,
+                "cost_usd": response.cost_usd,
+            }
 
             # Add optimization metadata to response
             if optimization_result:
-                if isinstance(response, dict):
-                    response["optimization"] = {
-                        "tokens_saved": optimization_result.tokens_saved,
-                        "reduction_percentage": optimization_result.reduction_percentage,
-                        "quality_score": optimization_result.quality_score,
-                        "cost_savings_usd": optimization_result.metadata.get("cost_savings_usd", 0.0),
-                        "processing_time_ms": optimization_result.processing_time_ms,
-                    }
+                response_dict["optimization"] = {
+                    "tokens_saved": optimization_result.tokens_saved,
+                    "reduction_percentage": optimization_result.reduction_percentage,
+                    "quality_score": optimization_result.quality_score,
+                    "cost_savings_usd": optimization_result.metadata.get("cost_savings_usd", 0.0),
+                    "processing_time_ms": optimization_result.processing_time_ms,
+                }
 
-            result: dict[str, Any] = response
-            return result
+            return response_dict
 
         except Exception as e:
             logger.error(f"Provider call error: {e}")
@@ -427,7 +427,7 @@ def wrap_provider(
         >>> optimized = wrap_provider(base)
         >>>
         >>> # Use as normal - optimization happens automatically
-        >>> response = await optimized.generate(prompt="Long prompt...")
+        >>> response = await optimized.generate(messages=[{"role": "user", "content": "Long prompt..."}])
     """
     return OptimizedProvider(
         provider=provider,

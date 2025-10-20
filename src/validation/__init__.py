@@ -16,7 +16,6 @@ from .tool_schemas import (
     GetOptimizationSettingsInput,
     GetOptimizationStatsInput,
     LookupSemanticCacheInput,
-    OptimizeContextInput,
     StoreInSemanticCacheInput,
 )
 
@@ -24,7 +23,6 @@ __all__ = [
     # Decorator
     "validate_input",
     # Tool input schemas
-    "OptimizeContextInput",
     "GetOptimizationStatsInput",
     "GetOptimizationSettingsInput",
     "LookupSemanticCacheInput",

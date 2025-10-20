@@ -45,8 +45,22 @@ class ContextOptimizationConfig(BaseModel):
         default=10000.0, ge=0.0, description="Maximum processing time in milliseconds (default: 10s)"
     )
 
+    # Quality-based compression control (0-100 scale)
+    compression_quality: int = Field(
+        default=50,
+        ge=0,
+        le=100,
+        description=(
+            "Compression quality score (0-100): "
+            "0-33 = aggressive compression (70% reduction), "
+            "34-66 = balanced (50% reduction), "
+            "67-100 = high fidelity (30% reduction)"
+        ),
+    )
+
     # Seraph compression ratios (research-backed: arxiv papers on context compression)
     # Target: 40-60% retention for optimal quality-compression balance
+    # NOTE: These are overridden by compression_quality if set via environment
     seraph_l1_ratio: float = Field(
         default=0.15,
         ge=0.10,
@@ -106,6 +120,7 @@ def load_config() -> ContextOptimizationConfig:
     Environment Variables:
         CONTEXT_OPTIMIZATION_ENABLED: Enable/disable (default: true)
         CONTEXT_OPTIMIZATION_COMPRESSION_METHOD: Method selection (default: auto)
+        CONTEXT_OPTIMIZATION_COMPRESSION_QUALITY: Quality 0-100 (default: 50, overrides L1/L2/L3 ratios)
         CONTEXT_OPTIMIZATION_SERAPH_TOKEN_THRESHOLD: Token threshold for auto mode (default: 3000)
         CONTEXT_OPTIMIZATION_QUALITY_THRESHOLD: Min quality 0-1 (default: 0.90)
         CONTEXT_OPTIMIZATION_MAX_OVERHEAD_MS: Max time ms (default: 100.0)
@@ -125,6 +140,7 @@ def load_config() -> ContextOptimizationConfig:
     return ContextOptimizationConfig(
         enabled=os.getenv("CONTEXT_OPTIMIZATION_ENABLED", "true").lower() == "true",
         compression_method=os.getenv("CONTEXT_OPTIMIZATION_COMPRESSION_METHOD", default_method).lower(),
+        compression_quality=int(os.getenv("CONTEXT_OPTIMIZATION_COMPRESSION_QUALITY", "50")),
         seraph_token_threshold=int(os.getenv("CONTEXT_OPTIMIZATION_SERAPH_TOKEN_THRESHOLD", "3000")),
         quality_threshold=float(os.getenv("CONTEXT_OPTIMIZATION_QUALITY_THRESHOLD", "0.85")),
         max_overhead_ms=float(os.getenv("CONTEXT_OPTIMIZATION_MAX_OVERHEAD_MS", "10000.0")),

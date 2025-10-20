@@ -22,6 +22,8 @@ from fastmcp import FastMCP
 # Use relative imports (package is now properly structured)
 from .cache import close_all_caches, create_cache
 from .config import load_config
+from .context_optimization.config import load_config as load_optimization_config
+from .context_optimization.mcp_middleware import CompressionMiddleware
 from .observability import get_observability, initialize_observability
 from .validation import validate_input
 from .validation.tool_schemas import (
@@ -43,7 +45,6 @@ from .validation.tool_schemas import (
     GetSemanticCacheStatsInput,
     GetUsageReportInput,
     LookupSemanticCacheInput,
-    OptimizeContextInput,
     SearchSemanticCacheInput,
     StoreInSemanticCacheInput,
 )
@@ -69,6 +70,18 @@ async def server_lifespan(server: Any) -> Any:
 
 # Create FastMCP server with lifespan
 mcp = FastMCP("Seraph MCP - AI Optimization Platform", lifespan=server_lifespan)
+
+# Register MCP protocol compression middleware (Layer 1)
+# Compresses tool results + resource reads BEFORE client transmission
+# Per SDD §10.4.2: Two-layer architecture with separate metrics namespaces
+# Compression ratio is automatically determined per-request based on content analysis
+_optimization_config = load_optimization_config()
+mcp.add_middleware(
+    CompressionMiddleware(
+        config=_optimization_config,
+        timeout_seconds=10.0,
+    )
+)
 
 # Global state
 _initialized = False
@@ -146,7 +159,6 @@ async def check_status(include_details: bool = False) -> dict[str, Any]:
     if include_details:
         status["cache_details"] = cache_stats
         status["observability"] = {
-            "backend": obs.backend,
             "metrics_enabled": obs.enable_metrics,
             "tracing_enabled": obs.enable_tracing,
         }
@@ -286,9 +298,9 @@ async def get_metrics() -> dict[str, Any]:
     obs = get_observability()
     obs.increment("tools.get_metrics")
 
-    metrics = obs.get_metrics()
+    metrics = await obs.get_metrics()
 
-    return metrics
+    return {"metrics": metrics, "count": len(metrics)}
 
 
 # ============================================================================
@@ -921,96 +933,6 @@ async def clear_semantic_cache() -> dict[str, Any]:
 
 
 @mcp.tool()
-@validate_input(OptimizeContextInput)
-async def optimize_context(
-    content: str,
-    method: str = "auto",
-    quality_threshold: float | None = None,
-    max_overhead_ms: float | None = None,
-) -> dict[str, Any]:
-    """
-    Optimize content using context optimization (AI/Seraph/Hybrid compression).
-
-    Args:
-        content: Content to optimize
-        method: Compression method ('auto', 'ai', 'seraph', 'hybrid')
-        quality_threshold: Minimum quality score (0-1)
-        max_overhead_ms: Maximum processing time in milliseconds
-
-    Returns:
-        Optimization result with compressed content and metrics
-    """
-    if _context_optimizer is None:
-        return {"error": "Context optimization is not enabled"}
-
-    obs = get_observability()
-    obs.increment("tools.optimize_context")
-
-    try:
-        from .context_optimization import optimize_content
-        from .context_optimization.config import ContextOptimizationConfig
-
-        # Use provided thresholds or defaults from config
-        config = _context_optimizer.get("config")
-        if not isinstance(config, ContextOptimizationConfig):
-            return {"error": "Context optimization config not available"}
-
-        threshold = quality_threshold if quality_threshold is not None else config.quality_threshold
-        overhead = max_overhead_ms if max_overhead_ms is not None else config.max_overhead_ms
-
-        # Create a temporary config with the specified method
-        temp_config = ContextOptimizationConfig(
-            enabled=True,
-            compression_method=method,
-            quality_threshold=threshold,
-            max_overhead_ms=overhead,
-            seraph_token_threshold=config.seraph_token_threshold,
-            seraph_l1_ratio=config.seraph_l1_ratio,
-            seraph_l2_ratio=config.seraph_l2_ratio,
-            seraph_l3_ratio=config.seraph_l3_ratio,
-        )
-
-        result = await optimize_content(
-            content=content,
-            provider=_context_optimizer.get("provider"),
-            config=temp_config,
-        )
-
-        # Log token compression metrics
-        compression_log = (
-            f"[COMPRESSION] Before: {result.tokens_before} tokens | "
-            f"After: {result.tokens_after} tokens | "
-            f"Saved: {result.tokens_saved} tokens ({result.reduction_percentage:.1f}%) | "
-            f"Method: {result.method} | Quality: {result.quality_score:.2f} | "
-            f"Time: {result.processing_time_ms:.1f}ms"
-        )
-        logger.info(compression_log)
-        print(compression_log)
-
-        return {
-            "success": True,
-            "original_content": result.original_content,
-            "optimized_content": result.optimized_content,
-            "tokens_before": result.tokens_before,
-            "tokens_after": result.tokens_after,
-            "tokens_saved": result.tokens_saved,
-            "reduction_percentage": result.reduction_percentage,
-            "quality_score": result.quality_score,
-            "method_used": result.method,
-            "processing_time_ms": result.processing_time_ms,
-            "validation_passed": result.validation_passed,
-            "rollback_occurred": result.metadata.get("rollback_occurred", False),
-        }
-
-    except Exception as e:
-        logger.error(f"Error in optimize_context: {e}", exc_info=True)
-        return {
-            "success": False,
-            "error": str(e),
-        }
-
-
-@mcp.tool()
 @validate_input(GetOptimizationSettingsInput)
 async def get_optimization_settings() -> dict[str, Any]:
     """
@@ -1248,9 +1170,9 @@ async def initialize_server() -> None:
         obs = initialize_observability(
             enable_metrics=config.observability.enable_metrics,
             enable_tracing=config.observability.enable_tracing,
-            backend=config.observability.backend,
+            metrics_db_path=config.observability.metrics_db_path,
         )
-        logger.info(f"Observability initialized: backend={obs.backend}")
+        logger.info("Observability initialized with SQLite metrics storage")
 
         # Initialize cache
         cache = create_cache()
@@ -1348,7 +1270,52 @@ async def cleanup_server() -> None:
 
 
 def main() -> None:
-    """CLI entry point for seraph-mcp command."""
+    """
+    Unified entry point for seraph-mcp command.
+
+    Hybrid architecture (Per SDD §10.4.2):
+        - Always runs with local tools (cache, budget, optimization)
+        - Conditionally mounts backends if proxy.fastmcp.json exists
+        - Single process, unified middleware, transparent compression
+
+    No mode switching, no CLI flags - deterministic behavior based on config presence.
+
+    Architecture:
+        Seraph MCP (main) → 20 local tools always available
+                          ↓ (mount if proxy.fastmcp.json exists)
+                          → Backend Proxy → filesystem_*, github_*, postgres_*
+    """
+    from pathlib import Path
+
+    logger.info("=== Seraph MCP Server Starting ===")
+
+    # Check if backend mounting is needed
+    proxy_config_file = Path("proxy.fastmcp.json")
+
+    if proxy_config_file.exists():
+        # HYBRID MODE: Mount backends onto existing server
+        from .proxy import mount_backends_to_server
+
+        logger.info("Backend config detected: proxy.fastmcp.json")
+
+        try:
+            mount_backends_to_server(mcp)
+            logger.info("Hybrid architecture active: local tools + backend proxies")
+        except FileNotFoundError as e:
+            logger.error("Backend mounting failed: %s", e)
+            logger.warning("Continuing with local tools only")
+        except ValueError as e:
+            logger.error("Backend config validation error: %s", e)
+            logger.warning("Continuing with local tools only")
+        except Exception as e:
+            logger.error("Backend mounting error: %s", e, exc_info=True)
+            logger.warning("Continuing with local tools only")
+    else:
+        # LOCAL-ONLY MODE: Standard server with optimization tools
+        logger.info("No backend config - running with local tools only")
+
+    # Always run the unified server
+    logger.info("Starting unified Seraph MCP server with stdio transport")
     mcp.run()
 
 
