@@ -1784,13 +1784,28 @@ File Layout
   - config/ (schemas, loader, public get_config)
   - providers/ (base, factory, openai, anthropic, gemini, openai_compatible, models_dev)
   - cache/ (interface, factory, backends/{memory, redis})
-  - observability/ (monitoring)
-  - context_optimization/ (config, embeddings, optimizer, middleware, models, seraph_compression)
+  - observability/ (monitoring, database, db_models)
+  - context_optimization/ (config, embeddings, optimizer, middleware, models, seraph_compression, mcp_middleware)
   - budget_management/ (config, tracker, enforcer, analytics)
-  - semantic_cache/ (config, embeddings, cache)
-- data/ (runtime data: budget.db, chromadb persistence)
-- tests/ (if present)
-- pyproject.toml, uv.lock, README.md, LICENSE, CONTRIBUTING.md, fastmcp.json
+  - semantic_cache/ (config, embeddings, cache, eviction)
+- data/ (centralized runtime data storage - per §6 consistency)
+  - budget.db (SQLite: budget tracking, cost records, alerts)
+  - metrics.db (SQLite: observability metrics, traces, events)
+  - chromadb/ (ChromaDB: semantic cache embeddings and vectors)
+  - .gitkeep (preserves directory structure in version control)
+- tests/ (unit/, integration/, conftest.py)
+- pyproject.toml, uv.lock, README.md, LICENSE, CONTRIBUTING.md, fastmcp.json, proxy.fastmcp.json
+
+**Database Organization** (Standardized 2025-10-20, commit 880b1a4):
+- **Rationale**: All SQLite databases centralized in `data/` directory to prevent root directory pollution
+- **Migration**: Changed default paths from root `metrics.db` → `./data/metrics.db` (observability) and `budget.db` → `./data/budget.db` (budget management)
+- **Auto-Detection**: Parent directory created automatically via `Path.mkdir(parents=True, exist_ok=True)` during database initialization
+- **Configuration Hierarchy** (lowest to highest priority):
+  1. Code defaults: `./data/{metrics,budget}.db` (src/observability/database.py:33, src/config/schemas.py:95)
+  2. `.env` file: `METRICS_DB_PATH=./data/metrics.db`, `BUDGET_DB_PATH=./data/budget.db`
+  3. Environment variables: Override via shell export
+- **Backward Compatibility**: Users with explicit `METRICS_DB_PATH` or `BUDGET_DB_PATH` environment variables unaffected
+- **Fresh Clone Behavior**: `.gitkeep` ensures `data/` directory exists; databases created on first run
 
 --------------------------------------------------------------------------------
 Known Inconsistencies and Final Decisions
